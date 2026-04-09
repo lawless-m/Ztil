@@ -44,8 +44,6 @@ be assembled and run in a VM.
 - Chapter 7 cross-compilation — design discussion only, no code
 - A few secondary definitions marked NOTED in the inventory
   (ADUMP, DUMP, FORGET, .R — all non-essential for boot)
-- Some words described only in prose without code (MOD standalone,
-  MAX standalone) — can be reconstructed from descriptions
 
 ## Next Steps (for Claude Code)
 

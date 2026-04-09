@@ -7,23 +7,41 @@ Source: Loeliger, *Threaded Interpretive Languages*, Byte Books, 1981, Ch.5
 The outer interpreter is a secondary — a threaded code list. START/RESTART
 initialises BC to point to OUTER (the TYPE entry in this list) and jumps to NEXT.
 
+Flag convention used throughout: **FALSE = 0 = success** (found / is a number);
+**TRUE = nonzero = failure**. `*IF` branches forward on FALSE; `*END` branches
+backward on FALSE. The outer interpreter threaded code uses these polarities
+consistently.
+
 ```
-OUTER:  DW  TYPE        ; display message (start/restart/error)
-        DW  INLINE      ; get a line of input
-        DW  ASPACE      ; push space separator
-        DW  TOKEN        ; extract next token from line buffer
-        DW  ?SEARCH      ; search vocabularies    → (WA,False) or (True)
-        DW  *IF, 0B      ; if True (not found), skip to ?NUMBER
-        DW  ?NUMBER      ; try to convert as number → (N,True) or (False)
-        DW  *ENDF, 03    ; if False, skip to QUESTION
-        DW  QUESTION     ; handle terminator or unknown token
-        DW  *WHILE, EA   ; loop back to TYPE (unconditional)
-        DW  ?EXECUTE     ; execute or compile the found word
-        DW  *WHILE, E9   ; loop back to TYPE (unconditional)
+; Byte positions are relative to TYPE=0. Total = 28 bytes.
+OUTER:  DW  TYPE        ; 0-1   display message (start/restart/error)
+        DW  INLINE      ; 2-3   get a line of input
+        DW  ASPACE      ; 4-5   push space separator
+        DW  TOKEN       ; 6-7   extract next token from line buffer
+        DW  ?SEARCH     ; 8-9   search vocabularies → (WA,FALSE) or (TRUE)
+        DW  *IF, 0Bh    ; 10-12 if FALSE (found), forward to ?EXECUTE (byte 23)
+        DW  ?NUMBER     ; 13-14 try to convert as number → (N,FALSE) or (TRUE)
+        DW  *END, F3h   ; 15-17 if FALSE (number), backward to ASPACE (byte 4)
+        DW  QUESTION    ; 18-19 unknown token: display ? and restart
+        DW  *WHILE, EAh ; 20-22 unconditional backward to TYPE (byte 0)
+        DW  ?EXECUTE    ; 23-24 execute or compile the found word
+        DW  *WHILE, E9h ; 25-27 unconditional backward to ASPACE (byte 4)
 ```
+
+Branch target math: each branch offset is applied to the address of the
+offset byte itself. `*IF 0B` at byte 12 → 12+0B = 23 (?EXECUTE). `*END F3`
+at byte 17 → 17-0D = 4 (ASPACE). `*WHILE EA` at byte 22 → 22-16 = 0 (TYPE).
+`*WHILE E9` at byte 27 → 27-17 = 4 (ASPACE). Note that after ?EXECUTE the
+loop rejoins at ASPACE, not TYPE — so the start/restart banner is only
+displayed once per input line.
 
 Note: ?SEARCH, ?NUMBER, ?EXECUTE are headerless secondaries that wrap
 SEARCH, NUMBER, EXECUTE with compile-mode logic.
+
+OCR correction from Figure 5.2: the character sequence `*END F3` was
+originally transcribed as `*ENDF 03`, inventing a non-existent primitive.
+There is no `*ENDF` — the primitive is plain `*END` with relative offset
+`F3` (= -13 decimal).
 
 ## Listing 5.1 — START/RESTART
 
@@ -42,7 +60,7 @@ ABORT:
         LD   HL,0
         LD   (MODE),HL         ; set MODE=0, STATE=0 (adjacent bytes)
         LD   IY,NEXT           ; IY = address of NEXT (010Ch)
-        LD   IX,RETURN         ; set return stack pointer (FB00h)
+        LD   IX,RETURN         ; set return stack pointer (FA00h)
         LD   HL,8080h
         LD   (LBEND),HL        ; two terminators at end of line buffer
         LD   BC,OUTER          ; IR = address of TYPE in outer interp

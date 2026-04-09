@@ -1,5 +1,13 @@
 # ZIP TIL Code Extraction Inventory
 
+Every `DONE` entry below has Z80 source in one of 01–05 — these are
+the lines that were actually verified after going back to the PDF.
+Entries marked `NOTED` are documented in the book but deliberately
+not extracted (virtual memory, editor, floating point, etc.).
+
+The PDF itself is not retained in the repo. If anything here disagrees
+with the book, the files in this directory win.
+
 ## Status Summary
 
 ### Chapter 3 — Inner Interpreter
@@ -39,14 +47,16 @@
 | $UD/ | DONE | Subroutine | 24/8 divide |
 | $US/ | DONE | Subroutine | 16/8 divide |
 | * (multiply) | DONE | Arithmetic | Signed 16x8 multiply |
-| */ | DONE | Arithmetic | Sneaky IY trick |
-| */MOD | DONE | Arithmetic | Most complex arithmetic |
+| */ | DONE | Arithmetic | IY return-vector trick to reuse */MOD |
+| */MOD | DONE | Arithmetic | 16×8 then 24÷8 with remainder |
+| 0= | DONE | Relational | POP; OR bytes; push true iff zero |
+| ASCII | DONE | I/O | Binary digit → ASCII char |
 | *# (word literal) | DONE | Literal handler | Headerless |
 | *C# (byte literal) | DONE | Literal handler | Headerless |
 | *CDO | DONE | Program control | Byte loop init |
 | *CLOOP | DONE | Program control | Byte loop test |
-| *C+LOOP | NOTED | Program control | Uses SLOOP entrance |
-| *CLEAVE | NOTED | Program control | |
+| *C+LOOP | DONE | Program control | Byte loop w/ variable increment |
+| *CLEAVE | DONE | Program control | Force byte-loop exit |
 | *DO | DONE | Program control | Word loop init |
 | *ELSE | DONE | Program control | Forward branch |
 | *END | DONE | Program control | Conditional backward branch |
@@ -102,10 +112,10 @@
 | IOR | DONE | Logical | Bitwise OR |
 | KEY | DONE | I/O | CALL $KEY; LD L,A; PUSH HL |
 | LROT | DONE | Stack | Left rotate top 3 |
-| MAX | NOTED | Arithmetic | Signed max |
+| MAX | DONE | Arithmetic | Signed max |
 | MIN | DONE | Arithmetic | Signed min |
 | MINUS | DONE | Arithmetic | Negate (twos complement) |
-| MOD | NOTED | Arithmetic | Remainder only |
+| MOD | DONE | Arithmetic | Remainder only |
 | MOVE | DONE | Utility | Block move with overlap handling |
 | NOT | DONE | Logical | Invert flag |
 | OVER | DONE | Stack | POP HL; POP DE; PUSH DE; PUSH HL |
@@ -125,12 +135,12 @@
 ### Chapter 6 — Secondaries (threaded code only)
 | Keyword | Status | Notes |
 |---------|--------|-------|
-| #S | NOTED | BEGIN # DUP 0= END DROP |
+| #S | DONE | BEGIN # DUP 0= END DROP |
 | .R | NOTED | Right-justified number display |
 | : (colon) | NOTED | CURRENT @ CONTEXT ! ... MODE C1SET |
 | ;CODE | NOTED | Compiler directive |
 | <BUILDS | DONE | 0 CONSTANT |
-| ABORT | NOTED | Jump to START/RESTART |
+| ABORT | DONE | JP START (entry into START/RESTART) |
 | ADUMP | NOTED | ASCII memory dump |
 | ASPACE | DONE | Constant (hex 20) |
 | BASE | NOTED | System variable via *SYS |
@@ -143,16 +153,16 @@
 | COMPILER | NOTED | System variable via *SYS |
 | CONTEXT | NOTED | System variable via *SYS |
 | CORE | NOTED | Vocabulary |
-| CVARIABLE | NOTED | Defining word |
+| CVARIABLE | DONE | Defining word (byte variable) |
 | DECIMAL | DONE | LD A,10; LD (BASE),A |
 | DEFINITIONS | NOTED | |
 | DO | DONE | *# XX DO, ; IMMEDIATE |
-| DO, | NOTED | Store address and push |
+| DO, | DONE | , HERE |
 | DOES> | DONE | Complex defining word support |
 | DUMP | NOTED | Hex memory dump |
 | ELSE | NOTED | Compiler directive |
 | END | NOTED | XX END, ; IMMEDIATE |
-| END, | NOTED | Compiler directive |
+| END, | DONE | , HERE - C, |
 | ENTRY | DONE | CURRENT @ @ |
 | ERASE | DONE | Fill with spaces |
 | FILL | DONE | Fill with specified byte |

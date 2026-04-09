@@ -273,6 +273,75 @@ Bytes: 23.
 ```
 Bytes: 24.
 
+### D* — Signed 16×8 → 24-bit multiply
+Produces the full 24-bit signed product of the 16-bit second stack
+entry and the low-order byte of TOS. Replaces both entries with the
+16 least-significant bits (TOS) and 8 most-significant bits (2nd),
+sign-extended.
+```z80
+        EXX                    ; save IR
+        POP  BC                ; get 8-bit number
+        POP  DE                ; get 16-bit number
+        CALL $ISIGN            ; field input signs
+        CALL $UD*              ; multiply 16×8
+        EX   AF,AF'            ; retrieve sign flag
+        JP   P,OUTS            ; if +, it's OK
+        LD   A,C               ; move 8 most-significant
+        CPL                    ; complement
+        LD   C,A               ; restore
+        EX   DE,HL             ; move 16 least
+        LD   HL,0              ; get zero
+        SBC  HL,DE             ; negate 16 least
+        JR   NZ,OUTS           ; if not zero, OK
+        INC  C                 ; else 2's comp most
+OUTS:   PUSH HL                ; 16 least to stack
+        PUSH BC                ; 8 most to stack
+        EXX                    ; restore IR
+```
+Bytes: 39.
+
+### */ — Multiply then divide (truncated)
+Computes `(third * 2nd_byte) / top_byte` returning only the 16-bit
+quotient. Uses `*/MOD` as a subroutine via an IY trick.
+```z80
+        LD   IY,RETTO          ; change NEXT return vector
+        JP   $*/MOD            ; do the */MOD code
+RETTO:  POP  HL                ; drop the remainder
+        LD   IY,NEXT           ; restore normal NEXT return
+```
+Bytes: 22. Illustrates re-using a primitive as a subroutine: the
+`JP (IY)` inside `$*/MOD` jumps to RETTO instead of NEXT, which
+then restores IY before returning.
+
+### */MOD — Multiply then divide with remainder
+Computes `(third * 2nd_byte) / top_byte` leaving 16-bit quotient (2nd)
+and 8-bit remainder (TOS). Uses the full 24-bit intermediate product.
+```z80
+$*/MOD: POP  HL                ; divisor to L
+        EXX                    ; save IR and divisor
+        POP  BC                ; multiplicand (8)
+        POP  DE                ; multiplier (16)
+        CALL $ISIGN            ; field * sign
+        CALL $UD*              ; do 16×8 multiply
+        EXX                    ; get divisor and IR
+        EX   AF,AF'            ; get / sign flag
+        XOR  L                 ; XOR in divisor sign
+        EX   AF,AF'            ; save result sign
+        LD   A,L               ; get divisor
+        EXX                    ; save IR again
+        AND  A                 ; test divisor sign
+        JP   P,SKIPN           ; if +, it's OK
+        NEG                    ; make divisor positive
+SKIPN:  LD   D,C               ; move high 8 bits of 24
+        LD   E,A               ; move divisor
+        CALL $UD/              ; do 24×8 divide
+        CALL $OSIGN            ; justify result
+        PUSH HL                ; quotient to stack
+        PUSH BC                ; remainder to stack
+        EXX                    ; restore IR
+```
+Bytes: 43. The `$*/MOD` entrance is re-used by `*/`.
+
 ### / — Signed divide (16÷8 → 8 quotient)
 ```z80
         EXX                    ; save IR
@@ -298,6 +367,87 @@ Bytes: 24.
         EXX                    ; restore IR
 ```
 Bytes: 25.
+
+### D/MOD — Signed 24÷8 divide with remainder
+Divides a signed 24-bit dividend (3rd entry = 16 LSBs, 2nd entry = 8 MSBs)
+by the low-order byte of TOS. Replaces with 16-bit quotient (2nd) and
+positive 8-bit remainder expanded to 16 bits (TOS).
+```z80
+        EXX                    ; save IR
+        POP  HL                ; get 8-bit divisor
+        POP  DE                ; get 8 most-sig of dividend
+        POP  BC                ; get 16 least-sig of dividend
+        LD   A,H               ; divisor sign
+        XOR  D                 ; result sign
+        EX   AF,AF'            ; save sign flag
+        LD   A,L               ; get divisor magnitude
+        AND  A                 ; test sign
+        JP   P,MOV1            ; if +, it's OK
+        NEG                    ; make positive
+MOV1:   LD   D,A               ; store divisor
+        LD   H,B               ; get 16 least
+        LD   L,C               ;   to HL
+        LD   A,E               ; get 8 most
+        AND  A                 ; test sign
+        JP   P,MOV2            ; if +, it's OK
+        CPL                    ; complement high 8
+        LD   HL,0              ; zero
+        SBC  HL,BC             ; negate low 16
+        JR   NZ,MOV2           ; if non-zero, OK
+        INC  A                 ; else bump high
+MOV2:   LD   D,A               ; move high 8
+        CALL $UD/              ; divide 24×8
+        CALL $OSIGN            ; justify result
+        PUSH HL                ; quotient to stack
+        PUSH BC                ; remainder to stack
+        EXX                    ; restore IR
+```
+Bytes: 48. Does not validate that TOS is a valid 8-bit number, nor that
+the quotient fits in 16 bits.
+
+### MIN — Signed minimum
+Replaces the top two stack entries with the smaller (signed) value.
+```z80
+        POP  DE                ; get top
+        POP  HL                ; get 2nd
+        PUSH HL                ; assume 2nd smaller
+        AND  A                 ; reset carry
+        SBC  HL,DE             ; 2nd - top
+        JP   M,OUT             ; 2nd smaller, exit
+        POP  HL                ; drop 2nd
+        PUSH DE                ; push top
+OUT:    JP   (IY)              ; return to NEXT
+```
+Bytes: 21.
+
+### MAX — Signed maximum
+Replaces the top two stack entries with the larger (signed) value.
+```z80
+        POP  DE                ; get top
+        POP  HL                ; get 2nd
+        PUSH HL                ; assume 2nd greater
+        AND  A                 ; reset carry
+        SBC  HL,DE             ; 2nd - top
+        JP   P,OUT             ; 2nd greater, exit
+        POP  HL                ; drop 2nd
+        PUSH DE                ; push top
+OUT:    JP   (IY)              ; return to NEXT
+```
+Bytes: 21.
+
+### MOD — Signed remainder
+Replaces the top two stack entries with the 8-bit remainder of
+`2nd / top_byte`, sign-extended to 16 bits.
+```z80
+        EXX                    ; save IR
+        POP  DE                ; get 8-bit divisor
+        POP  BC                ; get 16-bit dividend
+        CALL $ISIGN            ; field input signs
+        CALL $US/              ; divide 16×8
+        PUSH BC                ; push remainder
+        EXX                    ; restore IR
+```
+Bytes: 21. No test for a valid 8-bit divisor.
 
 ### S* — Signed 8×8 multiply
 ```z80
@@ -352,6 +502,19 @@ Bytes: 22.
 PUSHIT: PUSH DE                ; flag to stack
 ```
 Bytes: 23.
+
+### 0= — Zero equality
+Replaces the top with TRUE if it was zero, FALSE otherwise.
+```z80
+        POP  HL                ; get word
+        LD   A,L               ; low byte
+        OR   H                 ; OR in high byte
+        LD   DE,0              ; flag false
+        JR   NZ,OUT            ; nonzero → push false
+        INC  DE                ; else flag true
+OUT:    PUSH DE                ; push flag
+```
+Bytes: 20.
 
 ## Logical
 
@@ -532,6 +695,49 @@ OUT:    JP   (IY)              ; return to NEXT
 ```
 Bytes: 19.
 
+### <# — Begin number conversion
+Saves number sign on the return stack and leaves a string terminator
+(ASCII space with bit 7 set, A0h) under the original number on the
+data stack. Must be paired with `#>` or `CR>` within a definition.
+```z80
+        POP  HL                ; get the number
+        LD   E,A0h             ; space with bit 7 = 1
+        PUSH DE                ; push string stop
+        PUSH HL                ; restore number
+        DEC  IX                ; decrement RSP
+        LD   (IX+0),H          ; sign byte to return stack
+```
+Bytes: 18. The sign is the high byte H — its top bit indicates sign.
+Note that E is loaded with A0h but D is untouched, so the pushed word's
+high byte is whatever D was on entry. (Quirk of the book's listing —
+for the terminator to work correctly, the caller must treat only the
+low byte as meaningful, which DISPLAY does.)
+
+### #> — End number conversion
+Discards the saved sign byte on the return stack and jumps into
+`$DISPLAY` to emit the number string that was built on the data stack.
+```z80
+        INC  IX                ; drop return stack sign byte
+        JP   $DISPLAY          ; go display string (no return)
+```
+Bytes: 13. Has no return address — enters DISPLAY's code body, which
+does its own `JP (IY)` to NEXT.
+
+### ASCII — Convert binary digit to ASCII character
+Converts the low byte of TOS (a value 0..35) to its ASCII character
+representation ('0'..'9', 'A'..'Z').
+```z80
+        POP  HL                ; get binary
+        LD   A,30h             ; ASCII '0'
+        ADD  A,L               ; add binary
+        CP   3Ah               ; letter?
+        JR   C,OUT             ; CY=1 → it's a digit
+        ADD  A,7               ; add letter bias (':'+7='A')
+OUT:    LD   L,A               ; back to L
+        PUSH HL                ; code to stack
+```
+Bytes: 22.
+
 ## System
 
 ### +SP — Add SP to TOS
@@ -583,6 +789,15 @@ Bytes: 27.
 OUT:    PUSH HL                ; push flag
 ```
 Bytes: 18.
+
+### ABORT — Jump to START/RESTART
+Unconditionally restarts the system via the ABORT entry point in
+START/RESTART (keeps current BASE, resets stacks and flags).
+```z80
+        JP   START             ; to START/RESTART
+```
+Bytes: 11. No return address. Referenced by `$PATCH` and used as the
+"total panic" recovery.
 
 ### EXECUTE — Execute word from stack
 ```z80
@@ -802,3 +1017,15 @@ Bytes: 22. OCR correction: `JP {IV}` → `JP (IY)`.
         JP   (IY)              ; return to NEXT
 ```
 Bytes: 15.
+
+### CVARIABLE — Create byte variable
+```z80
+        ; Secondary preamble: CCONSTANT (creates header + stores byte),
+        ;   then SCODE replaces code address
+        ; Generic code:
+        PUSH DE                ; push word address
+        JP   (IY)              ; return to NEXT
+```
+Bytes: 15. Formal: `: CVARIABLE CCONSTANT ;CODE ....` — same shape
+as VARIABLE except the initialiser uses CCONSTANT (one byte) instead
+of CONSTANT (one word). Used by BASE, MODE, STATE in the SYS block.

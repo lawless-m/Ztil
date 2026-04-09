@@ -169,6 +169,36 @@ Gets increment from stack, then uses SLOOP code from *LOOP.
 Bytes: 10. Note: *+LOOP has a code address but not a return address.
 Increments must be in the range -128 < I < 127.
 
+## *C+LOOP — Byte Loop with Variable Increment
+
+Adds the low byte of TOS to the top return-stack byte (byte loop
+index), then falls through to *CLOOP's test code.
+
+```z80
+*C+LOOP: PUSH IX               ; get return stack pointer
+         POP  HL               ;   to HL
+         POP  DE               ; get increment byte
+         LD   A,(HL)           ; get loop count
+         ADD  A,E              ; add increment
+         LD   (HL),A           ; restore loop count
+         JP   SCLOOP           ; jump to *CLOOP test code
+```
+
+Bytes: 12. Has a code address but not a return address. Increment
+must be in the range -128 < I < 127. (The SCLOOP label is the
+compare-and-branch portion of *CLOOP.)
+
+## *CLEAVE — Force Byte Loop Exit
+
+Replaces byte loop index with terminator on the return stack.
+
+```z80
+*CLEAVE: LD   A,(IX+1)         ; get terminator
+         LD   (IX+0),A         ; to index
+```
+
+Bytes: 10. Companion to *LEAVE for byte-length loops.
+
 ## *LEAVE — Force Loop Exit
 
 Replaces loop index with terminator to force exit on next test.
