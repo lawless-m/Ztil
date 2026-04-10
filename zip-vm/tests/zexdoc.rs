@@ -12,19 +12,22 @@ fn run_zexdoc() -> (String, bool) {
     // Load COM file at 0100h
     cpu.mem[0x0100..0x0100 + ZEXDOC.len()].copy_from_slice(ZEXDOC);
 
-    // Place a HALT at 0000h (warm boot target) and at 0005h (BDOS)
-    // Actually: at 0005h we put a RET so CALL 5 returns, but we intercept
-    // via PC check before executing.
+    // CP/M stub setup:
+    // 0000h: JP 0 (warm boot — we intercept at HALT or BDOS C=0)
     cpu.mem[0x0000] = 0x76; // HALT at warm boot
-    cpu.mem[0x0005] = 0xC9; // RET at BDOS (fallback)
+    // 0005h: RET (BDOS entry — we intercept PC=0005 before executing)
+    cpu.mem[0x0005] = 0xC9;
+    // 0006h-0007h: BDOS address = top of TPA. Programs do LD HL,(6); LD SP,HL
+    // to set their stack. Must be nonzero!
+    cpu.write16(0x0006, 0xF000);
 
     cpu.pc = 0x0100;
-    cpu.sp = 0xF000; // safe stack area
+    cpu.sp = 0xF000;
 
     let mut output = String::new();
     let mut has_error = false;
     let mut bdos_calls = 0u64;
-    let max_cycles: u64 = 500_000_000_000; // ZEXDOC needs ~46B cycles total
+    let max_cycles: u64 = 500_000_000_000;
 
     loop {
         if cpu.halted {
@@ -38,10 +41,6 @@ fn run_zexdoc() -> (String, bool) {
 
         // Intercept BDOS call at 0005h
         if cpu.pc == 0x0005 {
-            if bdos_calls < 20 {
-                let ret = cpu.read16(cpu.sp);
-                eprintln!("  BDOS#{} C={} DE={:04X} ret={:04X}", bdos_calls, cpu.c, cpu.de(), ret);
-            }
             bdos_calls += 1;
             match cpu.c {
                 0 => { break; } // Warm boot = exit
@@ -73,10 +72,18 @@ fn run_zexdoc() -> (String, bool) {
         cpu.step();
     }
 
-    // Check for errors in output
     if output.contains("ERROR") {
         has_error = true;
     }
+    // If no "OK" at all, that's also a failure (tests didn't complete)
+    let ok_count = output.matches("OK").count();
+    let err_count = output.matches("ERROR").count();
+    if ok_count == 0 && err_count == 0 {
+        has_error = true;
+    }
+
+    eprintln!("ZEXDOC: {} cycles, {} BDOS calls, {} OK, {} ERROR, halted={}",
+        cpu.cycles, bdos_calls, ok_count, err_count, cpu.halted);
 
     (output, has_error)
 }
