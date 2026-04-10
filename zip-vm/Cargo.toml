@@ -1,0 +1,12 @@
+[package]
+name = "zip-vm"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "zipcli"
+path = "src/main.rs"
+
+[lib]
+name = "zip_vm"
+path = "src/lib.rs"
