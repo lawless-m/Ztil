@@ -189,6 +189,60 @@ impl Cpu {
         std::mem::swap(&mut self.a, &mut self.a_);
         std::mem::swap(&mut self.f, &mut self.f_);
     }
+    // ---- Data stack (SP-based) aliases ----
+
+    pub fn dpush(&mut self, val: u16) { self.push16(val); }
+    pub fn dpop(&mut self) -> u16 { self.pop16() }
+    /// Peek at TOS without popping.
+    pub fn dpeek(&self) -> u16 { self.read16(self.sp) }
+
+    // ---- Return stack (IX-based) ----
+
+    pub fn rpush(&mut self, val: u16) {
+        self.ix = self.ix.wrapping_sub(1);
+        self.mem[self.ix as usize] = (val >> 8) as u8;
+        self.ix = self.ix.wrapping_sub(1);
+        self.mem[self.ix as usize] = val as u8;
+    }
+    pub fn rpop(&mut self) -> u16 {
+        let lo = self.mem[self.ix as usize] as u16;
+        self.ix = self.ix.wrapping_add(1);
+        let hi = self.mem[self.ix as usize] as u16;
+        self.ix = self.ix.wrapping_add(1);
+        lo | (hi << 8)
+    }
+    pub fn rpush_byte(&mut self, val: u8) {
+        self.ix = self.ix.wrapping_sub(1);
+        self.mem[self.ix as usize] = val;
+    }
+    pub fn rpop_byte(&mut self) -> u8 {
+        let v = self.mem[self.ix as usize];
+        self.ix = self.ix.wrapping_add(1);
+        v
+    }
+
+    // ---- Instruction Register (BC-based) — for native handlers ----
+
+    /// Fetch a byte from the threaded code stream (read at BC, advance BC).
+    pub fn ir_fetch8(&mut self) -> u8 {
+        let v = self.read8(self.bc());
+        self.set_bc(self.bc().wrapping_add(1));
+        v
+    }
+    /// Fetch a 16-bit word from the threaded code stream.
+    pub fn ir_fetch16(&mut self) -> u16 {
+        let lo = self.ir_fetch8() as u16;
+        let hi = self.ir_fetch8() as u16;
+        lo | (hi << 8)
+    }
+    /// Adjust IR by a signed 8-bit offset (for branch primitives).
+    pub fn ir_branch(&mut self, offset: i8) {
+        let bc = self.bc();
+        self.set_bc(bc.wrapping_add(offset as i16 as u16));
+    }
+
+    // ---- EX helpers ----
+
     pub fn exx(&mut self) {
         std::mem::swap(&mut self.b, &mut self.b_);
         std::mem::swap(&mut self.c, &mut self.c_);
