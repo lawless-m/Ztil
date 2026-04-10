@@ -10,3 +10,6 @@ path = "src/main.rs"
 [lib]
 name = "zip_vm"
 path = "src/lib.rs"
+
+[dependencies]
+crossterm = "0.29.0"

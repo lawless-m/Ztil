@@ -260,10 +260,7 @@ pub fn build() -> Asm {
         a.label("_hs_loop"); // target for backward branch
         a.dw_label("HASH"); a.dw_label("DUP"); a.dw_label("0=");
         a.dw_label("w_END");
-        // offset: backward to _hs_loop
-        // BC at offset byte, target = _hs_loop
-        // offset = _hs_loop - offset_byte_addr
-        a.jr_target("_hs_loop"); // reuse JR fixup — same math
+        a.tc_target("_hs_loop"); // backward branch offset to loop start
         a.dw_label("DROP");
         a.dw_label("SEMI");
         prev = Some(lbl);

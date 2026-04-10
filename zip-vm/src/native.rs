@@ -378,11 +378,13 @@ pub fn handle_trap(cpu: &mut Cpu, io: &mut Io) -> bool {
             let sep = cpu.dpop() as u8;
             let mut lbp = cpu.read16(rom::SYS + rom::SYS_LBP as u16);
             let dp = cpu.read16(rom::SYS + rom::SYS_DP as u16);
+            // Skip leading separators (relies on terminator 0x80 ≠ 0x20 to stop)
             if sep == 0x20 {
-                while cpu.read8(lbp) == 0x20 && lbp < rom::LBEND { lbp += 1; }
+                while cpu.read8(lbp) == 0x20 { lbp += 1; }
             }
+            // Copy token characters until separator or terminator (bit 7)
             let mut count: u8 = 0;
-            while lbp < rom::LBEND {
+            loop {
                 let ch = cpu.read8(lbp);
                 if ch == sep || ch & 0x80 != 0 { break; }
                 count += 1;
@@ -390,7 +392,13 @@ pub fn handle_trap(cpu: &mut Cpu, io: &mut Io) -> bool {
                 lbp += 1;
             }
             cpu.write8(dp, count);
-            if lbp < rom::LBEND && cpu.read8(lbp) == sep { lbp += 1; }
+            // Copy the stopping character to dp+1 so QUESTION can see
+            // the terminator sentinel (bit 7 set) for end-of-line detection
+            if count == 0 {
+                cpu.write8(dp + 1, cpu.read8(lbp));
+            }
+            // Advance past separator (but not past terminator)
+            if cpu.read8(lbp) == sep { lbp += 1; }
             cpu.write16(rom::SYS + rom::SYS_LBP as u16, lbp);
         }
         SEARCH_P => {

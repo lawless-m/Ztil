@@ -8,6 +8,7 @@ pub struct Asm {
     labels: HashMap<String, u16>,
     fixups_abs: Vec<(usize, String)>,
     fixups_rel: Vec<(usize, String)>,
+    fixups_tc: Vec<(usize, String)>,
 }
 
 impl Asm {
@@ -18,6 +19,7 @@ impl Asm {
             labels: HashMap::new(),
             fixups_abs: Vec::new(),
             fixups_rel: Vec::new(),
+            fixups_tc: Vec::new(),
         }
     }
 
@@ -110,6 +112,16 @@ impl Asm {
         self.jr_target(name);
     }
 
+    /// Emit a threaded-code branch offset byte to a label.
+    /// Unlike jr_target, the offset is `target - pos` (not `target - (pos+1)`)
+    /// because the Z80 branch primitives add offset to BC without advancing.
+    pub fn tc_target(&mut self, name: &str) {
+        let pos = self.code.len();
+        self.code.push(0);
+        // We use a new fixup list for TC offsets
+        self.fixups_tc.push((pos, name.to_string()));
+    }
+
     /// Emit JP nn to label.
     pub fn jp(&mut self, name: &str) {
         self.db(0xC3);
@@ -173,6 +185,17 @@ impl Asm {
             let disp = addr as i32 - from;
             assert!(disp >= -128 && disp <= 127,
                 "relative jump to {} out of range: {} (from {:04X} to {:04X})",
+                name, disp, from, addr);
+            self.code[*pos] = disp as u8;
+        }
+        // Threaded-code branch offsets: offset = target - pos (no +1)
+        for (pos, name) in &self.fixups_tc {
+            let addr = *self.labels.get(name.as_str())
+                .unwrap_or_else(|| panic!("unresolved label: {}", name));
+            let from = self.origin as i32 + *pos as i32;
+            let disp = addr as i32 - from;
+            assert!(disp >= -128 && disp <= 127,
+                "TC branch to {} out of range: {} (from {:04X} to {:04X})",
                 name, disp, from, addr);
             self.code[*pos] = disp as u8;
         }
