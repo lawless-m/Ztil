@@ -14,22 +14,31 @@
     padding: 20px;
   }
   h1 { color: #0a0; font-size: 18px; margin-bottom: 10px; }
-  #screen {
-    background: #000;
-    color: #0f0;
-    font-family: 'Courier New', monospace;
-    font-size: 18px;
-    line-height: 1.2;
-    padding: 16px;
+  #display {
+    position: relative;
     border: 2px solid #0a0;
     border-radius: 8px;
-    white-space: pre;
-    width: 40ch;
-    height: 28.8em; /* 24 lines * 1.2 line-height */
     box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
-    outline: none;
+    overflow: hidden;
   }
-  #screen .cursor {
+  #hrg-canvas {
+    display: block;
+    background: #000;
+    image-rendering: pixelated;
+  }
+  #text-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    color: #0f0;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    line-height: 1;
+    white-space: pre;
+    pointer-events: none;
+    padding: 0;
+    margin: 0;
+  }
+  #text-overlay .cursor {
     background: #0f0;
     color: #000;
   }
@@ -56,11 +65,15 @@
 </head>
 <body>
 <h1>Research Machines 380Z</h1>
-<div id="screen" tabindex="0"></div>
+<div id="display" tabindex="0">
+  <canvas id="hrg-canvas" width="640" height="384"></canvas>
+  <div id="text-overlay"></div>
+</div>
 <div id="controls">
   <button id="loadBtn">Load .COM</button>
   <input type="file" id="fileInput" accept=".com,.COM" style="display:none">
-  <span id="status">Click screen to type. Load a .COM file to run.</span>
+  <button id="hrgDemo">HRG Demo</button>
+  <span id="status">Click display to type. Load a .COM file to run.</span>
 </div>
 
 <script type="module">
@@ -68,19 +81,26 @@ import init, { Emulator } from '../pkg/rm380z_wasm.js';
 
 let emu = null;
 let wasmMemory = null;
-let animId = null;
 
-const screen = document.getElementById('screen');
+const display = document.getElementById('display');
+const canvas = document.getElementById('hrg-canvas');
+const ctx = canvas.getContext('2d');
+const textOverlay = document.getElementById('text-overlay');
 const status = document.getElementById('status');
 const fileInput = document.getElementById('fileInput');
 const loadBtn = document.getElementById('loadBtn');
+const hrgDemoBtn = document.getElementById('hrgDemo');
+
+// Canvas is 640x384 = 2x scale of 320x192
+const SCALE = 2;
+const HRG_W = 320;
+const HRG_H = 192;
 
 async function start() {
   const wasm = await init();
   wasmMemory = wasm.memory;
   emu = new Emulator();
-  renderVDU();
-  screen.focus();
+  display.focus();
   runLoop();
 }
 
@@ -105,7 +125,45 @@ function renderVDU() {
     }
     if (row < 23) html += '\n';
   }
-  screen.innerHTML = html;
+  textOverlay.innerHTML = html;
+}
+
+function renderHRG() {
+  if (!emu || !wasmMemory) return;
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!emu.hrg_enabled()) return;
+
+  const ptr = emu.hrg_ptr();
+  const mem = new Uint8Array(wasmMemory.buffer, ptr, HRG_W / 8 * HRG_H);
+
+  const imgData = ctx.createImageData(canvas.width, canvas.height);
+  const pixels = imgData.data;
+
+  for (let y = 0; y < HRG_H; y++) {
+    for (let byteX = 0; byteX < HRG_W / 8; byteX++) {
+      const byte = mem[y * (HRG_W / 8) + byteX];
+      for (let bit = 0; bit < 8; bit++) {
+        const on = (byte >> (7 - bit)) & 1;
+        if (on) {
+          const px = byteX * 8 + bit;
+          // Draw scaled pixel
+          for (let sy = 0; sy < SCALE; sy++) {
+            for (let sx = 0; sx < SCALE; sx++) {
+              const idx = ((y * SCALE + sy) * canvas.width + px * SCALE + sx) * 4;
+              pixels[idx] = 0;       // R
+              pixels[idx+1] = 255;   // G
+              pixels[idx+2] = 0;     // B
+              pixels[idx+3] = 255;   // A
+            }
+          }
+        }
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
 }
 
 function escHtml(c) {
@@ -120,12 +178,13 @@ function runLoop() {
   if (emu.is_running() && !emu.needs_key()) {
     emu.run(50000);
   }
+  renderHRG();
   renderVDU();
-  animId = requestAnimationFrame(runLoop);
+  requestAnimationFrame(runLoop);
 }
 
 // Keyboard
-screen.addEventListener('keydown', (e) => {
+display.addEventListener('keydown', (e) => {
   if (!emu) return;
   e.preventDefault();
 
@@ -150,7 +209,45 @@ fileInput.addEventListener('change', async (e) => {
   const data = new Uint8Array(await file.arrayBuffer());
   emu.load_com(data);
   status.textContent = `Loaded ${file.name} (${data.length} bytes)`;
-  screen.focus();
+  display.focus();
+});
+
+// HRG demo — draw some graphics to test the display
+hrgDemoBtn.addEventListener('click', () => {
+  if (!emu) return;
+  emu.hrg_clear();
+  emu.hrg_toggle(true);
+
+  // Draw border
+  for (let x = 0; x < HRG_W; x++) {
+    emu.hrg_set_pixel(x, 0);
+    emu.hrg_set_pixel(x, HRG_H - 1);
+  }
+  for (let y = 0; y < HRG_H; y++) {
+    emu.hrg_set_pixel(0, y);
+    emu.hrg_set_pixel(HRG_W - 1, y);
+  }
+
+  // Draw diagonals
+  for (let i = 0; i < HRG_H; i++) {
+    const x1 = Math.floor(i * HRG_W / HRG_H);
+    emu.hrg_set_pixel(x1, i);
+    emu.hrg_set_pixel(HRG_W - 1 - x1, i);
+  }
+
+  // Draw circle
+  const cx = HRG_W / 2, cy = HRG_H / 2, r = 80;
+  for (let a = 0; a < 360; a++) {
+    const rad = a * Math.PI / 180;
+    const x = Math.floor(cx + r * Math.cos(rad));
+    const y = Math.floor(cy + r * Math.sin(rad));
+    if (x >= 0 && x < HRG_W && y >= 0 && y < HRG_H) {
+      emu.hrg_set_pixel(x, y);
+    }
+  }
+
+  status.textContent = 'HRG demo: border, diagonals, circle (320×192)';
+  display.focus();
 });
 
 start();

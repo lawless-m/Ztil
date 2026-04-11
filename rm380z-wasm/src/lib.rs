@@ -9,11 +9,17 @@ const BIOS_BASE: u16 = 0xFA00;
 const BIOS_HANDLERS: u16 = BIOS_BASE + 17 * 3;
 const TPA_BASE: u16 = 0x0100;
 
-// VDU
+// VDU text mode
 const VDU_BASE: u16 = 0xFC00;
 const VDU_COLS: usize = 40;
 const VDU_ROWS: usize = 24;
 const VDU_SIZE: usize = VDU_COLS * VDU_ROWS;
+
+// HRG (High Resolution Graphics) — 320×192 monochrome bitmap
+const HRG_WIDTH: usize = 320;
+const HRG_HEIGHT: usize = 192;
+const HRG_BYTES_PER_ROW: usize = HRG_WIDTH / 8; // 40 bytes
+const HRG_SIZE: usize = HRG_BYTES_PER_ROW * HRG_HEIGHT; // 7680 bytes
 
 #[wasm_bindgen]
 pub struct Emulator {
@@ -23,6 +29,11 @@ pub struct Emulator {
     key_buffer: VecDeque<u8>,
     waiting_for_key: bool,
     running: bool,
+    /// HRG framebuffer — separate memory like the real HRG board.
+    /// 320×192 monochrome, 1 bit per pixel, 40 bytes per row.
+    /// Byte layout: MSB is leftmost pixel.
+    hrg: Box<[u8; HRG_SIZE]>,
+    hrg_enabled: bool,
 }
 
 #[wasm_bindgen]
@@ -45,6 +56,8 @@ impl Emulator {
             key_buffer: VecDeque::new(),
             waiting_for_key: false,
             running: true,
+            hrg: vec![0u8; HRG_SIZE].into_boxed_slice().try_into().unwrap(),
+            hrg_enabled: false,
         };
 
         // Print banner
@@ -138,6 +151,52 @@ impl Emulator {
     pub fn cursor_col(&self) -> usize { self.cursor_col }
     pub fn needs_key(&self) -> bool { self.waiting_for_key }
     pub fn is_running(&self) -> bool { self.running }
+
+    // --- HRG (High Resolution Graphics) ---
+
+    /// Get pointer to HRG framebuffer for direct JS access.
+    /// 320×192 monochrome, 40 bytes per row, MSB = leftmost pixel.
+    pub fn hrg_ptr(&self) -> *const u8 { self.hrg.as_ptr() }
+    pub fn hrg_width(&self) -> usize { HRG_WIDTH }
+    pub fn hrg_height(&self) -> usize { HRG_HEIGHT }
+    pub fn hrg_enabled(&self) -> bool { self.hrg_enabled }
+
+    /// Set a pixel in the HRG framebuffer.
+    pub fn hrg_set_pixel(&mut self, x: usize, y: usize) {
+        if x < HRG_WIDTH && y < HRG_HEIGHT {
+            let byte_idx = y * HRG_BYTES_PER_ROW + x / 8;
+            let bit = 7 - (x % 8); // MSB = leftmost
+            self.hrg[byte_idx] |= 1 << bit;
+            self.hrg_enabled = true;
+        }
+    }
+
+    /// Clear a pixel in the HRG framebuffer.
+    pub fn hrg_clear_pixel(&mut self, x: usize, y: usize) {
+        if x < HRG_WIDTH && y < HRG_HEIGHT {
+            let byte_idx = y * HRG_BYTES_PER_ROW + x / 8;
+            let bit = 7 - (x % 8);
+            self.hrg[byte_idx] &= !(1 << bit);
+        }
+    }
+
+    /// Clear entire HRG framebuffer.
+    pub fn hrg_clear(&mut self) {
+        for b in self.hrg.iter_mut() { *b = 0; }
+    }
+
+    /// Toggle HRG display on/off.
+    pub fn hrg_toggle(&mut self, enabled: bool) {
+        self.hrg_enabled = enabled;
+    }
+
+    /// Write a byte directly to HRG memory at offset.
+    pub fn hrg_write(&mut self, offset: usize, value: u8) {
+        if offset < HRG_SIZE {
+            self.hrg[offset] = value;
+            self.hrg_enabled = true;
+        }
+    }
 }
 
 // --- Internal methods (not exported) ---
