@@ -5,3 +5,4 @@ pub mod disk;
 pub mod console;
 pub mod ccp;
 pub mod vdu;
+pub mod diskimg;
