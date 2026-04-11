@@ -414,6 +414,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
   else if (e.key.length === 1) ch = e.key.charCodeAt(0);
   if (ch === 0 || ch >= 128) return;
+  status.textContent = `key=${ch} running=${emu.is_running()}`;
 
   if (!emu.is_running()) {
     // CCP mode: handle locally

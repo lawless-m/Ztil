@@ -287,11 +287,27 @@ export class Emulator {
         return ret >>> 0;
     }
     /**
+     * Write a string to the VDU.
+     * @param {string} s
+     */
+    vdu_print(s) {
+        const ptr0 = passStringToWasm0(s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.emulator_vdu_print(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
      * @returns {number}
      */
     vdu_ptr() {
         const ret = wasm.emulator_vdu_ptr(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * Write a character to the VDU (for JS-side CCP echo).
+     * @param {number} ch
+     */
+    vdu_write(ch) {
+        wasm.emulator_vdu_write(this.__wbg_ptr, ch);
     }
     /**
      * @returns {number}

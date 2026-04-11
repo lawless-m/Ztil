@@ -153,6 +153,16 @@ impl Emulator {
         }
     }
 
+    /// Write a character to the VDU (for JS-side CCP echo).
+    pub fn vdu_write(&mut self, ch: u8) {
+        self.vdu.write_char(&mut self.cpu.mem, ch);
+    }
+
+    /// Write a string to the VDU.
+    pub fn vdu_print(&mut self, s: &str) {
+        self.vdu.write_str(&mut self.cpu.mem, s);
+    }
+
     pub fn cursor_row(&self) -> usize { self.vdu.cursor_row }
     pub fn cursor_col(&self) -> usize { self.vdu.cursor_col }
     pub fn needs_key(&self) -> bool { self.waiting_for_key }
@@ -246,16 +256,6 @@ impl Emulator {
     fn go_idle(&mut self) {
         self.running = false;
         self.vdu.write_str(&mut self.cpu.mem, "\r\nA>");
-    }
-
-    /// Write a character to the VDU (for JS-side CCP echo).
-    pub fn vdu_write(&mut self, ch: u8) {
-        self.vdu.write_char(&mut self.cpu.mem, ch);
-    }
-
-    /// Write a string to the VDU.
-    pub fn vdu_print(&mut self, s: &str) {
-        self.vdu.write_str(&mut self.cpu.mem, s);
     }
 
     fn is_net_drive(&self, fcb_drive: u8) -> bool {
