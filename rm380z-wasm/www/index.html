@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RM 380Z</title>
+<style>
+  body {
+    background: #111;
+    color: #0f0;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  h1 { color: #0a0; font-size: 18px; margin-bottom: 10px; }
+  #screen {
+    background: #000;
+    color: #0f0;
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    line-height: 1.2;
+    padding: 16px;
+    border: 2px solid #0a0;
+    border-radius: 8px;
+    white-space: pre;
+    width: 40ch;
+    height: 28.8em; /* 24 lines * 1.2 line-height */
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+    outline: none;
+  }
+  #screen .cursor {
+    background: #0f0;
+    color: #000;
+  }
+  #controls {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  button {
+    background: #0a0;
+    color: #000;
+    border: none;
+    padding: 8px 16px;
+    font-family: monospace;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  button:hover { background: #0f0; }
+  #status { color: #0a0; font-size: 12px; }
+  input[type=file] { color: #0a0; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Research Machines 380Z</h1>
+<div id="screen" tabindex="0"></div>
+<div id="controls">
+  <button id="loadBtn">Load .COM</button>
+  <input type="file" id="fileInput" accept=".com,.COM" style="display:none">
+  <span id="status">Click screen to type. Load a .COM file to run.</span>
+</div>
+
+<script type="module">
+import init, { Emulator } from '../pkg/rm380z_wasm.js';
+
+let emu = null;
+let wasmMemory = null;
+let animId = null;
+
+const screen = document.getElementById('screen');
+const status = document.getElementById('status');
+const fileInput = document.getElementById('fileInput');
+const loadBtn = document.getElementById('loadBtn');
+
+async function start() {
+  const wasm = await init();
+  wasmMemory = wasm.memory;
+  emu = new Emulator();
+  renderVDU();
+  screen.focus();
+  runLoop();
+}
+
+function renderVDU() {
+  if (!emu || !wasmMemory) return;
+  const ptr = emu.vdu_ptr();
+  const mem = new Uint8Array(wasmMemory.buffer, ptr, 960);
+  const curRow = emu.cursor_row();
+  const curCol = emu.cursor_col();
+
+  let html = '';
+  for (let row = 0; row < 24; row++) {
+    for (let col = 0; col < 40; col++) {
+      let ch = mem[row * 40 + col];
+      if (ch < 32 || ch > 126) ch = 32;
+      const c = String.fromCharCode(ch);
+      if (row === curRow && col === curCol) {
+        html += '<span class="cursor">' + escHtml(c) + '</span>';
+      } else {
+        html += escHtml(c);
+      }
+    }
+    if (row < 23) html += '\n';
+  }
+  screen.innerHTML = html;
+}
+
+function escHtml(c) {
+  if (c === '<') return '&lt;';
+  if (c === '>') return '&gt;';
+  if (c === '&') return '&amp;';
+  return c;
+}
+
+function runLoop() {
+  if (!emu) return;
+  if (emu.is_running() && !emu.needs_key()) {
+    emu.run(50000);
+  }
+  renderVDU();
+  animId = requestAnimationFrame(runLoop);
+}
+
+// Keyboard
+screen.addEventListener('keydown', (e) => {
+  if (!emu) return;
+  e.preventDefault();
+
+  let ch = 0;
+  if (e.key === 'Enter') ch = 0x0D;
+  else if (e.key === 'Backspace') ch = 0x08;
+  else if (e.key === 'Tab') ch = 0x09;
+  else if (e.key === 'Escape') ch = 0x1B;
+  else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
+  else if (e.key.length === 1) ch = e.key.charCodeAt(0);
+
+  if (ch > 0 && ch < 128) {
+    emu.key_press(ch);
+  }
+});
+
+// File loading
+loadBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const data = new Uint8Array(await file.arrayBuffer());
+  emu.load_com(data);
+  status.textContent = `Loaded ${file.name} (${data.length} bytes)`;
+  screen.focus();
+});
+
+start();
+</script>
+</body>
+</html>
