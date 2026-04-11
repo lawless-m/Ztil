@@ -18,6 +18,8 @@ pub struct Emulator {
     key_buffer: VecDeque<u8>,
     waiting_for_key: bool,
     waiting_for_net: Option<u8>,
+    waiting_for_claude: bool,
+    claude_inject_keys: bool, // true = CLAUDE.RUN mode (inject as keystrokes)
     running: bool,
     hrg: Box<[u8; HRG_SIZE]>,
     hrg_enabled: bool,
@@ -44,6 +46,8 @@ impl Emulator {
             key_buffer: VecDeque::new(),
             waiting_for_key: false,
             waiting_for_net: None,
+            waiting_for_claude: false,
+            claude_inject_keys: false,
             running: true,
             hrg: vec![0u8; HRG_SIZE].into_boxed_slice().try_into().unwrap(),
             hrg_enabled: false,
@@ -70,7 +74,7 @@ impl Emulator {
         if !self.running { return 0; }
         let mut steps = 0u32;
         while steps < max_steps {
-            if self.waiting_for_key || self.waiting_for_net.is_some() { break; }
+            if self.waiting_for_key || self.waiting_for_net.is_some() || self.waiting_for_claude { break; }
             if !self.running { break; }
 
             if self.cpu.pc >= BIOS_HANDLERS && self.cpu.pc < BIOS_HANDLERS + 17 {
@@ -92,7 +96,7 @@ impl Emulator {
                 if func != 0 && !self.waiting_for_key && self.waiting_for_net.is_none() {
                     self.cpu.pc = self.cpu.pop16();
                 }
-                if self.waiting_for_key || self.waiting_for_net.is_some() { break; }
+                if self.waiting_for_key || self.waiting_for_net.is_some() || self.waiting_for_claude { break; }
                 continue;
             }
 
@@ -121,7 +125,25 @@ impl Emulator {
     pub fn cursor_row(&self) -> usize { self.vdu.cursor_row }
     pub fn cursor_col(&self) -> usize { self.vdu.cursor_col }
     pub fn needs_key(&self) -> bool { self.waiting_for_key }
+    pub fn needs_claude(&self) -> bool { self.waiting_for_claude }
     pub fn is_running(&self) -> bool { self.running }
+
+    /// Get the pending Claude prompt (for JS to send via WebSocket).
+    pub fn claude_get_prompt(&self) -> String {
+        self.net.get_prompt()
+    }
+
+    /// JS delivers Claude's response. If inject mode, feeds as keystrokes.
+    pub fn claude_set_response(&mut self, text: &str) {
+        if self.claude_inject_keys {
+            self.inject_keys(text.as_bytes());
+        } else {
+            let mut data = text.replace('\n', "\r\n").into_bytes();
+            data.extend_from_slice(b"\r\n");
+            self.net.set_claude_response(data);
+        }
+        self.waiting_for_claude = false;
+    }
 
     // --- HRG ---
     pub fn hrg_ptr(&self) -> *const u8 { self.hrg.as_ptr() }
@@ -375,7 +397,16 @@ impl Emulator {
                         let dma = 0x0080u16;
                         for i in 0..128 { self.cpu.write8(dma + i as u16, buf[i]); }
                         self.cpu.a = 0;
-                    } else { self.cpu.a = 1; }
+                    } else if !self.net.get_prompt().is_empty() && !self.waiting_for_claude {
+                        // First read after prompt written — signal JS to ask Claude
+                        self.claude_inject_keys = ftype == "run";
+                        self.waiting_for_claude = true;
+                        return; // don't pop return addr, retry after response
+                    } else if self.waiting_for_claude {
+                        return; // still waiting
+                    } else {
+                        self.cpu.a = 1; // EOF, no prompt
+                    }
                 }
                 _ => { self.cpu.a = 1; }
             }

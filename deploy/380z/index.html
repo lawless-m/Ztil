@@ -235,8 +235,22 @@ function esc(c) {
 
 async function runLoop() {
   if (!emu) return;
-  if (emu.is_running() && !emu.needs_key() && !emu.needs_net()) {
+  if (emu.is_running() && !emu.needs_key() && !emu.needs_net() && !emu.needs_claude()) {
     emu.run(50000);
+  }
+  // Handle pending Claude request (via WebSocket to server)
+  if (emu.needs_claude()) {
+    const prompt = emu.claude_get_prompt();
+    if (prompt) {
+      status.textContent = 'Asking Claude...';
+      try {
+        const response = await askClaude(prompt);
+        emu.claude_set_response(response);
+        status.textContent = 'Claude responded';
+      } catch(e) {
+        emu.claude_set_response('ERROR: ' + e.message);
+      }
+    }
   }
   // Handle pending network requests
   if (emu.needs_net()) {
