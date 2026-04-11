@@ -15,10 +15,12 @@ impl Console {
     pub fn write_char(&mut self, ch: u8) {
         let stdout = io::stdout();
         let mut out = stdout.lock();
-        if ch == 0x0D {
-            let _ = out.write_all(b"\r\n");
-        } else if ch >= 0x20 || ch == 0x07 || ch == 0x08 || ch == 0x09 || ch == 0x0A {
-            let _ = out.write_all(&[ch]);
+        match ch {
+            0x0D => { let _ = out.write_all(b"\r"); }
+            0x0A => { let _ = out.write_all(b"\n"); }
+            0x07 | 0x08 | 0x09 => { let _ = out.write_all(&[ch]); }
+            0x20..=0x7E => { let _ = out.write_all(&[ch]); }
+            _ => {}
         }
         let _ = out.flush();
     }

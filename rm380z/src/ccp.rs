@@ -7,7 +7,7 @@ pub fn run(cpm: &mut Cpm) {
     loop {
         // Print prompt
         let drive_letter = (b'A' + cpm.disk.current_disk) as char;
-        cpm.console.write_str(&format!("{}>\r\n", drive_letter));
+        cpm.console.write_str(&format!("{}>", drive_letter));
 
         // Read command line
         let line = cpm.console.read_line(127);

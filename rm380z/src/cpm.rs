@@ -40,13 +40,24 @@ impl Cpm {
         self.cpu.sp = BDOS_ADDR;
 
         loop {
-            if !self.running || self.cpu.halted {
+            if !self.running {
                 break;
             }
 
+            // BIOS warm boot trap (JP 0 → JP FA03 → HALT stub)
+            if self.cpu.halted || self.cpu.pc == BIOS_BASE + 3 {
+                self.cpu.halted = false;
+                self.warm_boot();
+                continue;
+            }
+
             if self.cpu.pc == BDOS_ENTRY {
+                let func = self.cpu.c;
                 bdos::dispatch(self);
-                self.cpu.pc = self.cpu.pop16();
+                // Warm boot (C=0) sets PC directly; don't pop return address
+                if func != 0 {
+                    self.cpu.pc = self.cpu.pop16();
+                }
                 continue;
             }
 
