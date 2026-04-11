@@ -127,7 +127,11 @@
       <p><b>Keys:</b><br>
       Ctrl-C — exit program<br>
       Ctrl-Z — end input<br>
-      Browser shortcuts (F keys, Alt) work normally</p>
+      Browser shortcuts work normally</p>
+      <p><b>Manuals:</b><br>
+      <a href="#" onclick="openManual('cpm');return false">CP/M 2.2</a> ·
+      <a href="#" onclick="openManual('mbasic');return false">MBASIC</a> ·
+      <a href="#" onclick="openManual('sargon');return false">Sargon Chess</a></p>
   </div>
 </div>
 
@@ -601,6 +605,108 @@ document.getElementById('copyVdu').addEventListener('click', () => {
     status.textContent = 'Screen copied to clipboard';
   });
 });
+
+function openManual(which) {
+  const w = window.open('', which + '_manual', 'width=600,height=700,scrollbars=yes');
+  if (!w) return;
+  const manuals = {
+    cpm: `<h1>CP/M 2.2 Quick Reference</h1>
+<h2>Commands</h2>
+<table><tr><td><b>DIR</b></td><td>List files on current drive</td></tr>
+<tr><td><b>DIR B:</b></td><td>List files on drive B</td></tr>
+<tr><td><b>TYPE file</b></td><td>Display text file contents</td></tr>
+<tr><td><b>ERA file</b></td><td>Delete a file</td></tr>
+<tr><td><b>REN new=old</b></td><td>Rename a file</td></tr>
+<tr><td><b>B:</b></td><td>Switch to drive B</td></tr>
+<tr><td><b>STAT</b></td><td>Show disk status</td></tr>
+<tr><td><b>PIP d=s</b></td><td>Copy file (PIP B:COPY.TXT=A:ORIG.TXT)</td></tr></table>
+<h2>Running Programs</h2>
+<p>Type the program name without .COM extension:<br>
+<code>A&gt;MBASIC</code> runs MBASIC.COM<br>
+<code>A&gt;SARGON</code> runs SARGON.COM</p>
+<h2>Page Zero</h2>
+<table><tr><td>0000h</td><td>Warm boot (JP to BIOS)</td></tr>
+<tr><td>0005h</td><td>BDOS entry point</td></tr>
+<tr><td>005Ch</td><td>Default FCB 1</td></tr>
+<tr><td>006Ch</td><td>Default FCB 2</td></tr>
+<tr><td>0080h</td><td>Command tail / DMA buffer</td></tr>
+<tr><td>0100h</td><td>TPA start (.COM files load here)</td></tr></table>
+<h2>BDOS Functions (CALL 5)</h2>
+<table><tr><td>C=0</td><td>System reset</td></tr>
+<tr><td>C=1</td><td>Console input</td></tr>
+<tr><td>C=2</td><td>Console output (E=char)</td></tr>
+<tr><td>C=9</td><td>Print string (DE=addr, $-terminated)</td></tr>
+<tr><td>C=12</td><td>Return version (HL=0022h)</td></tr>
+<tr><td>C=15</td><td>Open file (DE=FCB)</td></tr>
+<tr><td>C=16</td><td>Close file</td></tr>
+<tr><td>C=20</td><td>Read sequential</td></tr>
+<tr><td>C=21</td><td>Write sequential</td></tr>
+<tr><td>C=22</td><td>Make file</td></tr></table>`,
+
+    mbasic: `<h1>MBASIC Quick Reference</h1>
+<h2>Starting</h2>
+<p><code>A&gt;MBASIC</code> — start BASIC interpreter<br>
+<code>A&gt;MBASIC PROG</code> — load and run PROG.BAS</p>
+<h2>Editing</h2>
+<p>Type line numbers to enter program lines:<br>
+<code>10 PRINT "HELLO"</code><br>
+<code>20 FOR I=1 TO 10</code><br>
+<code>30 PRINT I*I</code><br>
+<code>40 NEXT I</code></p>
+<p><code>LIST</code> — show program<br>
+<code>RUN</code> — execute program<br>
+<code>NEW</code> — clear program</p>
+<h2>File Operations</h2>
+<p><code>SAVE "name"</code> — save to disk<br>
+<code>LOAD "name"</code> — load from disk<br>
+<code>FILES</code> — list .BAS files<br>
+<code>KILL "name.bas"</code> — delete file<br>
+<code>SYSTEM</code> — exit to CP/M</p>
+<h2>Common Statements</h2>
+<table><tr><td>PRINT</td><td>Output text/values</td></tr>
+<tr><td>INPUT</td><td>Read user input</td></tr>
+<tr><td>IF...THEN</td><td>Conditional</td></tr>
+<tr><td>FOR...NEXT</td><td>Loop</td></tr>
+<tr><td>GOTO / GOSUB</td><td>Jump / subroutine</td></tr>
+<tr><td>DIM</td><td>Declare array</td></tr>
+<tr><td>DEF FN</td><td>Define function</td></tr>
+<tr><td>REM</td><td>Comment</td></tr>
+<tr><td>DATA / READ</td><td>Inline data</td></tr>
+<tr><td>PEEK / POKE</td><td>Memory access</td></tr>
+<tr><td>INP / OUT</td><td>Port I/O</td></tr></table>
+<h2>Functions</h2>
+<p>ABS, INT, RND, SQR, SIN, COS, TAN, ATN, LOG, EXP,
+LEN, LEFT$, RIGHT$, MID$, STR$, VAL, CHR$, ASC, TAB, SPC</p>`,
+
+    sargon: `<h1>Sargon Chess</h1>
+<h2>Starting</h2>
+<p><code>A&gt;SARGON</code></p>
+<p>Answer the setup questions:<br>
+- Error bell: Y or N<br>
+- Difficulty level: 0 (instant) to 6 (slow)<br>
+- Play white or black</p>
+<h2>Making Moves</h2>
+<p>Enter moves as: <b>E2E4</b> (from-square to-square)<br>
+Columns: A-H (left to right)<br>
+Rows: 1-8 (bottom to top, white side)</p>
+<h2>Commands During Play</h2>
+<p>Type at the move prompt:<br>
+<b>Move</b> (e.g. E2E4) — make a move<br>
+Sargon shows its move and updates the board.</p>
+<h2>Tips</h2>
+<p>- Level 0 is instant, good for testing<br>
+- Level 3+ can take a while to think<br>
+- Ctrl-C exits to CP/M</p>`
+  };
+  const body = manuals[which] || '<h1>Manual not found</h1>';
+  w.document.write(\`<!DOCTYPE html><html><head><title>\${which} Manual</title>
+<style>body{background:#111;color:#0f0;font-family:monospace;padding:20px;max-width:560px}
+h1{color:#0a0;font-size:18px}h2{color:#0a0;font-size:14px;margin-top:16px}
+table{border-collapse:collapse}td{padding:2px 10px;vertical-align:top}
+code{background:#1a1a1a;padding:1px 4px}a{color:#0f0}</style></head>
+<body>\${body}</body></html>\`);
+  w.document.close();
+}
 
 function typeFile(name) {
   if (!emu) return;
