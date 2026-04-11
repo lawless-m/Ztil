@@ -44,11 +44,14 @@ impl Cpm {
                 break;
             }
 
-            // BIOS warm boot trap (JP 0 → JP FA03 → HALT stub)
-            if self.cpu.halted || self.cpu.pc == BIOS_BASE + 3 {
-                if std::env::var("CPM_TRACE").is_ok() {
-                    eprintln!("[BOOT] PC={:04X} SP={:04X}", self.cpu.pc, self.cpu.sp);
-                }
+            // BIOS handler intercept: PC in the handler area (FA33-FA43)
+            if self.cpu.pc >= BIOS_HANDLERS && self.cpu.pc < BIOS_HANDLERS + 17 {
+                let bios_func = (self.cpu.pc - BIOS_HANDLERS) as u8;
+                self.handle_bios(bios_func);
+                continue;
+            }
+
+            if self.cpu.halted {
                 self.cpu.halted = false;
                 self.warm_boot();
                 continue;
@@ -103,6 +106,37 @@ impl Cpm {
         self.disk.dma_addr = DMA_DEFAULT;
     }
 
+    /// Handle a direct BIOS call. Programs like MBASIC read the BIOS jump
+    /// table and call BIOS functions directly for performance.
+    fn handle_bios(&mut self, func: u8) {
+        if std::env::var("CPM_TRACE").is_ok() {
+            eprintln!("[BIOS] func={} C={:02X}", func, self.cpu.c);
+        }
+        match func {
+            0 => { /* BOOT */ self.warm_boot(); return; }
+            1 => { /* WBOOT */ self.warm_boot(); return; }
+            2 => { /* CONST */
+                self.cpu.a = if self.console.key_ready() { 0xFF } else { 0x00 };
+            }
+            3 => { /* CONIN */
+                self.cpu.a = self.console.read_key() & 0x7F;
+            }
+            4 => { /* CONOUT */
+                self.console.write_char(self.cpu.c);
+            }
+            5 => { /* LIST */ } // printer — ignore
+            6 => { /* PUNCH */ } // paper tape — ignore
+            7 => { /* READER */ self.cpu.a = 0x1A; } // EOF
+            _ => {
+                if std::env::var("CPM_TRACE").is_ok() {
+                    eprintln!("[BIOS] unhandled function {}", func);
+                }
+            }
+        }
+        // BIOS functions were CALLed, so RET to return
+        self.cpu.pc = self.cpu.pop16();
+    }
+
     /// Warm boot: return to CCP.
     pub fn warm_boot(&mut self) {
         setup_page_zero(&mut self.cpu);
@@ -127,13 +161,21 @@ fn setup_page_zero(cpu: &mut Cpu) {
     cpu.write16(0x0006, BDOS_ADDR);
 }
 
+/// Base address of BIOS handler area (after the 17×3 jump table).
+pub const BIOS_HANDLERS: u16 = BIOS_BASE + 17 * 3; // FA33
+
 fn setup_bios_stubs(cpu: &mut Cpu) {
-    // Fill BIOS jump table with HALTs as safety net.
-    // 17 entries × 3 bytes each.
+    // BIOS jump table: 17 entries × 3 bytes, each JP to a handler.
+    // Programs read these JP targets to call BIOS functions directly.
     for i in 0..17u16 {
-        let addr = BIOS_BASE + i * 3;
-        cpu.mem[addr as usize] = 0x76; // HALT
-        cpu.mem[(addr + 1) as usize] = 0x00;
-        cpu.mem[(addr + 2) as usize] = 0x00;
+        let entry = BIOS_BASE + i * 3;
+        let handler = BIOS_HANDLERS + i;
+        cpu.mem[entry as usize] = 0xC3; // JP
+        cpu.write16(entry + 1, handler);
+    }
+    // Handler area: each is a single RET (0xC9).
+    // We intercept PC in this range before execution.
+    for i in 0..17u16 {
+        cpu.mem[(BIOS_HANDLERS + i) as usize] = 0xC9; // RET
     }
 }

@@ -225,8 +225,11 @@ fn open_file(cpm: &mut Cpm) {
 
 fn close_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
-    cpm.disk.close(fcb_addr);
-    cpm.cpu.a = 0;
+    if cpm.disk.close(fcb_addr) {
+        cpm.cpu.a = 0; // directory code 0 = success
+    } else {
+        cpm.cpu.a = 0xFF; // file not found / not open
+    }
 }
 
 fn search_first(cpm: &mut Cpm) {

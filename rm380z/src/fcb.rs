@@ -23,9 +23,11 @@ pub fn drive(cpu: &Cpu, fcb: u16) -> u8 {
     cpu.read8(fcb)
 }
 
-/// Zero-fill the FCB except drive and name fields.
+/// Clear the extent/record fields of an FCB (bytes 12-15 only).
+/// Only clears the 4 extent bytes, not the full record area, because
+/// the default FCBs at 005C and 006C overlap in CP/M's page zero.
 pub fn clear(cpu: &mut Cpu, fcb: u16) {
-    for i in 12..36 {
+    for i in 12..16 {
         cpu.write8(fcb + i, 0);
     }
 }
