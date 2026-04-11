@@ -1,0 +1,14 @@
+[Unit]
+Description=RM 380Z CP/M Emulator Server
+After=network.target
+
+[Service]
+Type=simple
+User=matt
+WorkingDirectory=/home/matt/Git/Ztil
+ExecStart=/home/matt/Git/Ztil/target/release/rm380z-server 3805 /home/matt/Git/Ztil/deploy/380z
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
