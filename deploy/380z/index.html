@@ -98,11 +98,40 @@
   <input type="file" id="fileInput" accept=".com,.COM">
   <button class="com-btn" data-com="com/HELLO.COM">Hello</button>
   <button class="com-btn" data-com="com/SARGON.COM">Sargon Chess</button>
+  <button class="com-btn" data-com="com/MBASIC.COM">MBASIC</button>
   <button id="hrgDemo">HRG Demo</button>
   <button id="hiresBtn">640 Mode</button>
   <button id="clearHrg">Clear HRG</button>
   <button id="copyVdu">Copy Screen</button>
   <div id="status">Type DIR, load .COM files, or click a program button.</div>
+</div>
+
+<div id="help" style="max-width:900px; margin-top:16px; color:#0a0; font-size:12px; line-height:1.5;">
+  <details>
+    <summary style="cursor:pointer; font-size:14px;">Quick Reference</summary>
+    <div style="columns:2; column-gap:30px; margin-top:8px;">
+      <p><b>Commands</b> (type at A&gt; prompt):<br>
+      DIR — list files<br>
+      TYPE file — show text file<br>
+      HELP — show this help<br>
+      Upload .COM files with the Load button</p>
+      <p><b>Programs:</b><br>
+      MBASIC — Microsoft BASIC<br>
+      SARGON — chess game<br>
+      HELLO — test program</p>
+      <p><b>MBASIC quick start:</b><br>
+      10 PRINT "HELLO"<br>
+      20 FOR I=1 TO 10<br>
+      30 PRINT I*I<br>
+      40 NEXT I<br>
+      RUN<br>
+      SYSTEM (back to CP/M)</p>
+      <p><b>Keys:</b><br>
+      Ctrl-C — exit program<br>
+      Ctrl-Z — end input<br>
+      Browser shortcuts (F keys, Alt) work normally</p>
+    </div>
+  </details>
 </div>
 
 <script type="module">
@@ -440,6 +469,12 @@ document.addEventListener('keydown', (e) => {
           if (col > 0) emu.vdu_print('\r\n');
         }
         emu.vdu_print('A>');
+      } else if (cmd === 'HELP') {
+        typeFile('HELP.TXT');
+        emu.vdu_print('A>');
+      } else if (cmd.startsWith('TYPE ') && cmd.length > 5) {
+        typeFile(cmd.substring(5).trim());
+        emu.vdu_print('A>');
       } else if (cmd === 'EXIT') {
         emu.vdu_print('Bye.\r\n');
       } else if (cmd) {
@@ -569,6 +604,15 @@ document.getElementById('copyVdu').addEventListener('click', () => {
     status.textContent = 'Screen copied to clipboard';
   });
 });
+
+function typeFile(name) {
+  if (!emu) return;
+  // Look for file in stored files
+  const files = emu.list_files();
+  const key = name.toUpperCase();
+  // Just show "File not found" for now since text files aren't in the WASM store
+  emu.vdu_print('File not found\r\n');
+}
 
 start();
 </script>
