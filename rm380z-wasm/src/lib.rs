@@ -305,6 +305,18 @@ impl Emulator {
         Vec::new()
     }
 
+    /// JS calls this to inject text as keystrokes (Claude RUN mode).
+    pub fn inject_keys(&mut self, data: &[u8]) {
+        for &b in data {
+            if b == b'\n' {
+                self.key_buffer.push_back(0x0D); // CR for CP/M
+            } else if b != b'\r' && b < 128 {
+                self.key_buffer.push_back(b);
+            }
+        }
+        self.waiting_for_key = false;
+    }
+
     /// JS calls this to deliver WebSocket incoming data.
     pub fn net_ws_receive(&mut self, conn_id: u8, data: &[u8]) {
         if let Some(conn) = self.net_conns.get_mut(&conn_id) {
