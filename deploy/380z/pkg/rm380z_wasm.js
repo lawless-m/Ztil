@@ -189,14 +189,17 @@ export class Emulator {
         wasm.emulator_load_com(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * Load a .COM by name from stored files. Returns true if found.
+     * Load a .COM by name with optional arguments. Returns true if found.
      * @param {string} name
+     * @param {string} args
      * @returns {boolean}
      */
-    load_com_by_name(name) {
+    load_com_by_name(name, args) {
         const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.emulator_load_com_by_name(this.__wbg_ptr, ptr0, len0);
+        const ptr1 = passStringToWasm0(args, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.emulator_load_com_by_name(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return ret !== 0;
     }
     /**

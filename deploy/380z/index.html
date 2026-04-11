@@ -500,8 +500,12 @@ document.addEventListener('keydown', (e) => {
       } else if (cmd === 'EXIT') {
         emu.vdu_print('Bye.\r\n');
       } else if (cmd) {
-        if (emu.load_com_by_name(cmd)) {
-          status.textContent = 'Running ' + cmd;
+        // Split command and args: "ED TEST.ASM" -> cmd="ED", rest="TEST.ASM"
+        const spaceIdx = cmd.indexOf(' ');
+        const prog = spaceIdx >= 0 ? cmd.substring(0, spaceIdx) : cmd;
+        const progArgs = spaceIdx >= 0 ? cmd.substring(spaceIdx + 1).trim() : '';
+        if (emu.load_com_by_name(prog, progArgs)) {
+          status.textContent = 'Running ' + prog;
         } else {
           emu.vdu_print(cmd + '?\r\n');
           emu.vdu_print('A>');

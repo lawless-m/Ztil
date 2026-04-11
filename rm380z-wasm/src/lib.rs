@@ -148,12 +148,31 @@ impl Emulator {
         names
     }
 
-    /// Load a .COM by name from stored files. Returns true if found.
-    pub fn load_com_by_name(&mut self, name: &str) -> bool {
+    /// Load a .COM by name with optional arguments. Returns true if found.
+    pub fn load_com_by_name(&mut self, name: &str, args: &str) -> bool {
         let key = name.to_uppercase();
         let key = if key.ends_with(".COM") { key } else { format!("{}.COM", key) };
         if let Some(data) = self.files.get(&key).cloned() {
-            self.load_com(&data);
+            let tail = if args.is_empty() { String::new() } else { format!(" {}", args) };
+            page_zero::load_com(&mut self.cpu, &data, &tail);
+            self.running = true;
+            self.waiting_for_key = false;
+            self.waiting_for_claude = false;
+            self.waiting_for_net = None;
+            // Parse args into FCBs
+            let parts: Vec<&str> = args.split_whitespace().collect();
+            if let Some(arg1) = parts.first() {
+                rm380z_core::fcb::parse_into(&mut self.cpu, 0x005C, arg1);
+            }
+            if let Some(arg2) = parts.get(1) {
+                rm380z_core::fcb::parse_into(&mut self.cpu, 0x006C, arg2);
+            }
+            // Clear VDU for fresh program
+            for i in 0..rm380z_core::vdu::VDU_SIZE {
+                self.cpu.mem[rm380z_core::vdu::VDU_BASE as usize + i] = b' ';
+            }
+            self.vdu.cursor_row = 0;
+            self.vdu.cursor_col = 0;
             true
         } else {
             false
