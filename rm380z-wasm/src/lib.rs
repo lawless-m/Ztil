@@ -254,8 +254,13 @@ impl Emulator {
         self.waiting_for_net.map(|id| id as i32).unwrap_or(-1)
     }
 
+    /// Check if a connection is WebSocket (true) or HTTP (false).
+    pub fn net_is_ws(&self, conn_id: u8) -> bool {
+        self.net_conns.get(&conn_id).map(|c| c.proto == NetProto::WebSocket).unwrap_or(false)
+    }
+
     /// Get the request details for a pending connection (for JS to execute).
-    /// Returns "VERB URL\nHeader: val\n..." or empty if no pending request.
+    /// For HTTP: "VERB URL\nHeaders...". For WSK: just the URL.
     pub fn net_get_request(&self, conn_id: u8) -> String {
         match self.net_conns.get(&conn_id) {
             Some(conn) if conn.state == NetState::CtlWritten => {
@@ -287,6 +292,17 @@ impl Emulator {
         if self.waiting_for_net == Some(conn_id) {
             self.waiting_for_net = None;
         }
+    }
+
+    /// Get and clear pending WebSocket send data.
+    pub fn net_ws_take_send(&mut self, conn_id: u8) -> Vec<u8> {
+        if let Some(conn) = self.net_conns.get_mut(&conn_id) {
+            if conn.proto == NetProto::WebSocket {
+                let data = std::mem::take(&mut conn.req_body);
+                return data;
+            }
+        }
+        Vec::new()
     }
 
     /// JS calls this to deliver WebSocket incoming data.
@@ -471,12 +487,18 @@ impl Emulator {
         let drv = self.fcb_drive(fcb);
 
         if self.is_net_drive(drv) {
-            if let Some((ftype, conn_id, _proto)) = self.parse_net_filename(fcb) {
+            if let Some((ftype, conn_id, proto)) = self.parse_net_filename(fcb) {
                 match ftype {
                     NetFileType::Clone => {
                         // Allocate new connection — ID returned on first read
                         let id = self.net_next_id;
                         self.net_next_id += 1;
+                        // Pre-create the connection with the right protocol
+                        self.net_conns.insert(id, NetConn {
+                            proto,
+                            ctl_data: Vec::new(), req_body: Vec::new(),
+                            resp_data: Vec::new(), resp_pos: 0, state: NetState::New,
+                        });
                         self.net_fcbs.insert(fcb, (id, NetFileType::Clone));
                         self.cpu.a = 0;
                     }
@@ -526,15 +548,6 @@ impl Emulator {
                 NetFileType::Clone => {
                     // Read from clone returns the connection ID as text
                     let id = conn_id;
-                    // Create the connection now
-                    self.net_conns.entry(id).or_insert(NetConn {
-                        proto: NetProto::Http,
-                        ctl_data: Vec::new(),
-                        req_body: Vec::new(),
-                        resp_data: Vec::new(),
-                        resp_pos: 0,
-                        state: NetState::New,
-                    });
                     let id_str = format!("{}\r\n", id);
                     let mut buf = [0x1Au8; 128];
                     let bytes = id_str.as_bytes();

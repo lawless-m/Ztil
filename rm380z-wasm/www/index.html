@@ -206,7 +206,11 @@ async function runLoop() {
       const req = emu.net_get_request(connId);
       if (req) {
         try {
-          await handleNetRequest(connId, req);
+          if (emu.net_is_ws(connId)) {
+            handleWsRequest(connId, req);
+          } else {
+            await handleNetRequest(connId, req);
+          }
         } catch(e) {
           const errMsg = new TextEncoder().encode('ERROR: ' + e.message + '\r\n');
           emu.net_set_response(connId, errMsg);
@@ -214,6 +218,7 @@ async function runLoop() {
       }
     }
   }
+  flushWsWrites();
   renderVDU();
   renderHRG();
   requestAnimationFrame(runLoop);
@@ -254,6 +259,65 @@ async function handleNetRequest(connId, req) {
   emu.net_set_response(connId, data);
 
   status.textContent = `${verb} ${url} — ${resp.status} (${data.length} bytes)`;
+}
+
+// WebSocket connections (keyed by connection ID)
+const wsSockets = {};
+
+function handleWsRequest(connId, req) {
+  const url = req.trim();
+  status.textContent = `WSK ${url}...`;
+
+  const ws = new WebSocket(url);
+  wsSockets[connId] = ws;
+
+  ws.onopen = () => {
+    status.textContent = `WSK ${url} connected`;
+    // Send any data that was written before connection opened
+    const body = emu.net_get_request_body(connId);
+    if (body.length > 0) {
+      ws.send(body);
+    }
+    // Unblock the emulator (ctl write is done)
+    emu.net_set_response(connId, new Uint8Array(0));
+  };
+
+  ws.onmessage = (event) => {
+    // Convert message to bytes and feed to emulator
+    if (typeof event.data === 'string') {
+      emu.net_ws_receive(connId, new TextEncoder().encode(event.data));
+    } else if (event.data instanceof ArrayBuffer) {
+      emu.net_ws_receive(connId, new Uint8Array(event.data));
+    } else {
+      // Blob
+      event.data.arrayBuffer().then(buf => {
+        emu.net_ws_receive(connId, new Uint8Array(buf));
+      });
+    }
+  };
+
+  ws.onclose = () => {
+    status.textContent = `WSK ${url} closed`;
+    delete wsSockets[connId];
+  };
+
+  ws.onerror = (e) => {
+    const err = new TextEncoder().encode('WSK ERROR\r\n');
+    emu.net_set_response(connId, err);
+    delete wsSockets[connId];
+  };
+}
+
+// Flush pending WebSocket writes from the emulator
+function flushWsWrites() {
+  for (const [id, ws] of Object.entries(wsSockets)) {
+    if (ws.readyState === WebSocket.OPEN) {
+      const data = emu.net_ws_take_send(parseInt(id));
+      if (data.length > 0) {
+        ws.send(data);
+      }
+    }
+  }
 }
 
 // Keyboard — capture on text screen
