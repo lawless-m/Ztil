@@ -1,4 +1,4 @@
-use zip_vm::cpu::Cpu;
+use z80::cpu::Cpu;
 use zip_vm::native;
 use zip_vm::rom;
 

@@ -394,7 +394,7 @@ pub fn build() -> Asm {
 }
 
 /// Load ROM into CPU memory and set up fixed-address lookup table.
-pub fn load(cpu: &mut crate::cpu::Cpu) {
+pub fn load(cpu: &mut z80::cpu::Cpu) {
     let asm = build();
     asm.load_into(&mut cpu.mem);
 

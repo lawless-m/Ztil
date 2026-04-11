@@ -1,0 +1,3 @@
+[workspace]
+members = ["z80", "zip-vm"]
+resolver = "2"

@@ -3,7 +3,7 @@ use crossterm::{
     terminal,
 };
 use std::io::{self, Write};
-use zip_vm::cpu::Cpu;
+use z80::cpu::Cpu;
 use zip_vm::native;
 use zip_vm::rom;
 

@@ -1,5 +1,5 @@
-use zip_vm::cpu::Cpu;
-use zip_vm::flags;
+use z80::cpu::Cpu;
+use z80::flags;
 
 fn cpu_with(code: &[u8]) -> Cpu {
     let mut cpu = Cpu::new();

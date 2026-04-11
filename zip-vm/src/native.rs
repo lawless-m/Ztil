@@ -1,4 +1,4 @@
-use crate::cpu::Cpu;
+use z80::cpu::Cpu;
 use crate::rom;
 use std::collections::VecDeque;
 

@@ -12,4 +12,5 @@ name = "zip_vm"
 path = "src/lib.rs"
 
 [dependencies]
+z80 = { path = "../z80" }
 crossterm = "0.29.0"
