@@ -1,0 +1,44 @@
+<!DOCTYPE html><html><head><title>CP/M 2.2 Manual</title>
+<style>body{background:#111;color:#0f0;font-family:monospace;padding:20px;max-width:560px}
+h1{color:#0a0;font-size:18px}h2{color:#0a0;font-size:14px;margin-top:16px}
+table{border-collapse:collapse}td{padding:2px 10px;vertical-align:top}
+code{background:#1a1a1a;padding:1px 4px}</style></head><body>
+<h1>CP/M 2.2 Quick Reference</h1>
+<h2>Commands</h2>
+<table>
+<tr><td><b>DIR</b></td><td>List files on current drive</td></tr>
+<tr><td><b>DIR B:</b></td><td>List files on drive B</td></tr>
+<tr><td><b>TYPE file</b></td><td>Display text file contents</td></tr>
+<tr><td><b>ERA file</b></td><td>Delete a file</td></tr>
+<tr><td><b>REN new=old</b></td><td>Rename a file</td></tr>
+<tr><td><b>B:</b></td><td>Switch to drive B</td></tr>
+<tr><td><b>STAT</b></td><td>Show disk status</td></tr>
+<tr><td><b>PIP d=s</b></td><td>Copy file (PIP B:COPY.TXT=A:ORIG.TXT)</td></tr>
+</table>
+<h2>Running Programs</h2>
+<p>Type the program name without .COM extension:<br>
+<code>A&gt;MBASIC</code> runs MBASIC.COM<br>
+<code>A&gt;SARGON</code> runs SARGON.COM</p>
+<h2>Page Zero</h2>
+<table>
+<tr><td>0000h</td><td>Warm boot (JP to BIOS)</td></tr>
+<tr><td>0005h</td><td>BDOS entry point</td></tr>
+<tr><td>005Ch</td><td>Default FCB 1</td></tr>
+<tr><td>006Ch</td><td>Default FCB 2</td></tr>
+<tr><td>0080h</td><td>Command tail / DMA buffer</td></tr>
+<tr><td>0100h</td><td>TPA start (.COM files load here)</td></tr>
+</table>
+<h2>BDOS Functions (CALL 5)</h2>
+<table>
+<tr><td>C=0</td><td>System reset</td></tr>
+<tr><td>C=1</td><td>Console input</td></tr>
+<tr><td>C=2</td><td>Console output (E=char)</td></tr>
+<tr><td>C=9</td><td>Print string (DE=addr, $-terminated)</td></tr>
+<tr><td>C=12</td><td>Return version (HL=0022h)</td></tr>
+<tr><td>C=15</td><td>Open file (DE=FCB)</td></tr>
+<tr><td>C=16</td><td>Close file</td></tr>
+<tr><td>C=20</td><td>Read sequential</td></tr>
+<tr><td>C=21</td><td>Write sequential</td></tr>
+<tr><td>C=22</td><td>Make file</td></tr>
+</table>
+</body></html>
