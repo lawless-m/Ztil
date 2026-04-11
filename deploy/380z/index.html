@@ -140,9 +140,12 @@
       Ctrl-Z - end input<br>
       Browser shortcuts work normally</p>
       <p><b>Manuals:</b><br>
-      <a href="#" onclick="openManual('cpm');return false">CP/M 2.2</a> ·
+      <a href="#" onclick="openManual('cpm');return false">CP/M</a> ·
       <a href="#" onclick="openManual('mbasic');return false">MBASIC</a> ·
-      <a href="#" onclick="openManual('sargon');return false">Sargon Chess</a></p>
+      <a href="#" onclick="openManual('ed');return false">ED</a> ·
+      <a href="#" onclick="openManual('asm');return false">ASM</a> ·
+      <a href="#" onclick="openManual('tools');return false">Tools</a> ·
+      <a href="#" onclick="openManual('sargon');return false">Sargon</a></p>
   </div>
 </div>
 
@@ -644,6 +647,9 @@ window.openManual = async function(which) {
     panel.innerHTML = '<div id="manual-tabs" style="display:flex;border-bottom:1px solid #0a0;padding:0">' +
       '<button class="mtab" data-m="cpm" style="flex:1;background:#1a1a1a;color:#0a0;border:none;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">CP/M</button>' +
       '<button class="mtab" data-m="mbasic" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">MBASIC</button>' +
+      '<button class="mtab" data-m="ed" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">ED</button>' +
+      '<button class="mtab" data-m="asm" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">ASM</button>' +
+      '<button class="mtab" data-m="tools" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">Tools</button>' +
       '<button class="mtab" data-m="sargon" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">Sargon</button>' +
       '<button id="manual-close" style="background:#0a0;color:#000;border:none;padding:6px 10px;cursor:pointer;font-family:monospace">X</button>' +
       '</div><div id="manual-content" style="overflow-y:auto;padding:12px;max-height:calc(80vh - 35px)"></div>';

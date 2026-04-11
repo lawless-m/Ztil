@@ -1,0 +1,54 @@
+<!DOCTYPE html><html><head><title>ASM Manual</title>
+<meta charset="utf-8">
+<style>body{background:#111;color:#0f0;font-family:monospace;padding:20px;max-width:560px}
+h1{color:#0a0;font-size:18px}h2{color:#0a0;font-size:14px;margin-top:16px}
+table{border-collapse:collapse}td{padding:2px 10px;vertical-align:top}
+code{background:#1a1a1a;padding:1px 4px}</style></head><body>
+<h1>ASM - 8080 Assembler</h1>
+<h2>Usage</h2>
+<p><code>A&gt;ASM filename</code> (no extension - reads .ASM, writes .HEX and .PRN)</p>
+<p>Then: <code>A&gt;LOAD filename</code> to convert .HEX to .COM</p>
+<h2>Source Format</h2>
+<p>Label in column 1, instructions indented with tab/spaces.</p>
+<pre>
+        ORG  100H
+        MVI  C,9      ;BDOS print string
+        LXI  D,MSG
+        CALL 5
+        RET
+MSG:    DB   'Hello$'
+        END
+</pre>
+<h2>Directives</h2>
+<table>
+<tr><td>ORG addr</td><td>Set origin address</td></tr>
+<tr><td>DB val,...</td><td>Define bytes/strings</td></tr>
+<tr><td>DW val,...</td><td>Define words</td></tr>
+<tr><td>DS count</td><td>Define storage (reserve bytes)</td></tr>
+<tr><td>EQU val</td><td>Equate label to value</td></tr>
+<tr><td>END</td><td>End of source</td></tr>
+</table>
+<h2>Common 8080 Instructions</h2>
+<table>
+<tr><td>MVI r,n</td><td>Load register with immediate</td></tr>
+<tr><td>MOV r,r</td><td>Move between registers</td></tr>
+<tr><td>LXI rp,nn</td><td>Load register pair</td></tr>
+<tr><td>LDA addr</td><td>Load A from memory</td></tr>
+<tr><td>STA addr</td><td>Store A to memory</td></tr>
+<tr><td>ADD r / ADI n</td><td>Add</td></tr>
+<tr><td>SUB r / SUI n</td><td>Subtract</td></tr>
+<tr><td>CMP r / CPI n</td><td>Compare</td></tr>
+<tr><td>ANA r / ANI n</td><td>AND</td></tr>
+<tr><td>ORA r / ORI n</td><td>OR</td></tr>
+<tr><td>JMP addr</td><td>Jump</td></tr>
+<tr><td>JZ/JNZ/JC/JNC</td><td>Conditional jump</td></tr>
+<tr><td>CALL addr</td><td>Call subroutine</td></tr>
+<tr><td>RET</td><td>Return</td></tr>
+<tr><td>PUSH/POP rp</td><td>Stack operations</td></tr>
+<tr><td>INR/DCR r</td><td>Increment/decrement</td></tr>
+<tr><td>INX/DCX rp</td><td>Inc/dec register pair</td></tr>
+</table>
+<h2>Registers</h2>
+<p>A, B, C, D, E, H, L, M (memory via HL)<br>
+Pairs: BC, DE, HL, SP</p>
+</body></html>

@@ -1,0 +1,37 @@
+<!DOCTYPE html><html><head><title>ED Manual</title>
+<meta charset="utf-8">
+<style>body{background:#111;color:#0f0;font-family:monospace;padding:20px;max-width:560px}
+h1{color:#0a0;font-size:18px}h2{color:#0a0;font-size:14px;margin-top:16px}
+code{background:#1a1a1a;padding:1px 4px}</style></head><body>
+<h1>ED - CP/M Line Editor</h1>
+<h2>Starting</h2>
+<p><code>A&gt;ED filename.ext</code></p>
+<p>If the file exists, ED loads it. Otherwise: NEW FILE.</p>
+<h2>Commands (at * prompt)</h2>
+<p><b>I</b> - Insert mode. Type lines. End with Ctrl-Z.<br>
+<b>nT</b> - Type n lines (T alone = current line)<br>
+<b>nL</b> - List n lines<br>
+<b>B</b> - Move to beginning<br>
+<b>#</b> - Move to end<br>
+<b>nU</b> - Move up n lines<br>
+<b>nD</b> - Delete n lines<br>
+<b>nK</b> - Kill (delete) n characters<br>
+<b>Stext^Z</b> - Search for text<br>
+<b>nFtext^Zreplace^Z</b> - Find and replace<br>
+<b>E</b> - Save and exit<br>
+<b>H</b> - Save and re-edit (keep editing)<br>
+<b>Q</b> - Quit without saving</p>
+<h2>Example</h2>
+<p><code>A&gt;ED TEST.ASM</code><br>
+<code>NEW FILE</code><br>
+<code>*I</code><br>
+<code>&nbsp;&nbsp;ORG 100H</code><br>
+<code>&nbsp;&nbsp;MVI C,9</code><br>
+<code>&nbsp;&nbsp;LXI D,MSG</code><br>
+<code>&nbsp;&nbsp;CALL 5</code><br>
+<code>&nbsp;&nbsp;RET</code><br>
+<code>MSG: DB 'HI$'</code><br>
+<code>&nbsp;&nbsp;END</code><br>
+<code>^Z</code><br>
+<code>*E</code></p>
+</body></html>

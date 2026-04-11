@@ -1,0 +1,46 @@
+<!DOCTYPE html><html><head><title>CP/M Tools</title>
+<meta charset="utf-8">
+<style>body{background:#111;color:#0f0;font-family:monospace;padding:20px;max-width:560px}
+h1{color:#0a0;font-size:18px}h2{color:#0a0;font-size:14px;margin-top:16px}
+code{background:#1a1a1a;padding:1px 4px}</style></head><body>
+<h1>CP/M Utilities</h1>
+
+<h2>STAT - Disk Status</h2>
+<p><code>A&gt;STAT</code> - show drive status and free space<br>
+<code>A&gt;STAT *.*</code> - show all file sizes<br>
+<code>A&gt;STAT DSK:</code> - drive characteristics</p>
+
+<h2>PIP - File Copy</h2>
+<p><code>A&gt;PIP dest=source</code><br>
+<code>A&gt;PIP B:FILE.TXT=A:FILE.TXT</code> - copy between drives<br>
+<code>A&gt;PIP COPY.COM=ORIG.COM</code> - copy on same drive<br>
+<code>A&gt;PIP CON:=FILE.TXT</code> - type file to console</p>
+
+<h2>DUMP - Hex Dump</h2>
+<p><code>A&gt;DUMP filename</code> - show file as hex bytes</p>
+
+<h2>LOAD - HEX to COM</h2>
+<p><code>A&gt;LOAD filename</code> - convert .HEX to .COM<br>
+(Used after ASM to make executable)</p>
+
+<h2>DDT - Debugger</h2>
+<p><code>A&gt;DDT filename.COM</code> - load and debug<br>
+<code>-D100</code> - dump memory at 100h<br>
+<code>-L100</code> - disassemble at 100h<br>
+<code>-G100</code> - execute from 100h<br>
+<code>-S100</code> - set memory at 100h<br>
+<code>-X</code> - examine registers<br>
+<code>-G0</code> - exit to CP/M</p>
+
+<h2>CLAUDE - Ask Claude AI</h2>
+<p><code>A&gt;CLAUDE</code><br>
+Type your question, get Claude's response.<br>
+Uses the WebSocket connection to the host server.</p>
+
+<h2>Development Workflow</h2>
+<p>1. <code>ED PROG.ASM</code> - write source<br>
+2. <code>ASM PROG</code> - assemble to .HEX<br>
+3. <code>LOAD PROG</code> - convert to .COM<br>
+4. <code>PROG</code> - run it<br>
+5. <code>DDT PROG.COM</code> - debug if needed</p>
+</body></html>
