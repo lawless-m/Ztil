@@ -400,9 +400,11 @@ function flushWsWrites() {
   }
 }
 
-// Keyboard — capture on text screen
-textScreen.addEventListener('keydown', (e) => {
+// Keyboard — capture on whole document (no need to click text screen)
+document.addEventListener('keydown', (e) => {
   if (!emu) return;
+  // Don't capture when file input is active
+  if (e.target === fileInput) return;
   e.preventDefault();
   let ch = 0;
   if (e.key === 'Enter') ch = 0x0D;
