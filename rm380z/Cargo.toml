@@ -1,0 +1,12 @@
+[package]
+name = "rm380z"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rm380z"
+path = "src/main.rs"
+
+[dependencies]
+z80 = { path = "../z80" }
+crossterm = "0.29.0"
