@@ -211,37 +211,50 @@ fn get_dpb(cpm: &mut Cpm) {
 // --- File I/O ---
 
 /// Parse a network filename from an FCB: CLONE.HTTP, 0.CTL, 0.DATA
-fn parse_net_fcb(cpu: &z80::cpu::Cpu, fcb: u16) -> Option<(&'static str, Option<u8>)> {
+/// Returns (file_type, conn_id, ext_string)
+fn parse_net_fcb(cpu: &z80::cpu::Cpu, fcb: u16) -> Option<(&'static str, Option<u8>, String)> {
     let name: String = (0..8).map(|i| (cpu.read8(fcb + 1 + i) & 0x7F) as char).collect();
     let ext: String = (0..3).map(|i| (cpu.read8(fcb + 9 + i) & 0x7F) as char).collect();
     let name = name.trim();
     let ext = ext.trim();
+    let ext_owned = ext.to_string();
 
     if name == "CLONE" && (ext == "WWW" || ext == "WSK") {
-        return Some(("clone", None));
+        return Some(("clone", None, ext_owned.clone()));
     }
     if name == "CLAUDE" && ext == "AI" {
-        return Some(("claude", None));
+        return Some(("claude", None, ext_owned.clone()));
     }
     if name == "CLAUDE" && ext == "KEY" {
-        return Some(("apikey", None));
+        return Some(("apikey", None, ext_owned.clone()));
     }
     if name == "CLAUDE" && ext == "CLI" {
-        return Some(("cli", None));
+        return Some(("cli", None, ext_owned.clone()));
+    }
+    // Memory banks: MEM.0 through MEM.3, MEM.VDU
+    if name == "MEM" {
+        return match ext {
+            "0" | "1" | "2" | "3" | "VDU" => Some(("mem", None, ext_owned.clone())),
+            _ => None,
+        };
+    }
+    // Device files: DEV.CPU
+    if name == "DEV" && ext == "CPU" {
+        return Some(("devcpu", None, ext_owned.clone()));
     }
     if name == "CLAUDE" && ext == "RUN" {
-        return Some(("run", None));
+        return Some(("run", None, ext_owned.clone()));
     }
     if name == "CLAUDE" && ext == "MNS" {
-        return Some(("models", None));
+        return Some(("models", None, ext_owned.clone()));
     }
     if name == "CLAUDE" && ext == "MDL" {
-        return Some(("setmodel", None));
+        return Some(("setmodel", None, ext_owned.clone()));
     }
     let id: u8 = name.parse().ok()?;
     match ext {
-        "CTL" => Some(("ctl", Some(id))),
-        "DATA" => Some(("data", Some(id))),
+        "CTL" => Some(("ctl", Some(id), ext_owned.clone())),
+        "DATA" => Some(("data", Some(id), ext_owned.clone())),
         _ => None,
     }
 }
@@ -253,12 +266,13 @@ fn open_file(cpm: &mut Cpm) {
     // Check for network drive
     if cpm.disk.is_image_or_net(drv) {
         if let Some(net) = cpm.disk.net_drive(drv) {
-            if let Some((ftype, id)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
+            if let Some((ftype, id, ext_str)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
                 match ftype {
                     "clone" => { net.clone_conn(); cpm.cpu.a = 0; }
                     "ctl" | "data" => { cpm.cpu.a = if id.is_some() { 0 } else { 0xFF }; }
                     "claude" | "cli" | "run" => { net.open_claude(); cpm.cpu.a = 0; }
                     "apikey" | "setmodel" => { cpm.cpu.a = 0; }
+                    "mem" | "devcpu" => { cpm.cpu.a = 0; }
                     "models" => { cpm.cpu.a = 0; }
                     _ => { cpm.cpu.a = 0xFF; }
                 }
@@ -325,7 +339,7 @@ fn read_seq(cpm: &mut Cpm) {
     let drv = fcb::drive(&cpm.cpu, fcb_addr);
 
     // Network read: handle clone (returns ID) and data (returns response)
-    if let Some((ftype, id)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
+    if let Some((ftype, id, ext_str)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
         if let Some(net) = cpm.disk.net_drive(drv) {
             match ftype {
                 "clone" => {
@@ -394,6 +408,40 @@ fn read_seq(cpm: &mut Cpm) {
                     cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
                     cpm.cpu.a = 0;
                 }
+                "mem" => {
+                    // Read 128 bytes from memory bank
+                    let (base, size) = match ext_str.as_str() {
+                        "0" => (0x0000usize, 0x4000usize),
+                        "1" => (0x4000, 0x4000),
+                        "2" => (0x8000, 0x4000),
+                        "3" => (0xC000, 0x4000),
+                        "VDU" => (0xFC00, 0x0400),
+                        _ => (0, 0),
+                    };
+                    let cr = cpm.cpu.read8(fcb_addr + 32) as usize;
+                    let offset = base + cr * 128;
+                    if offset + 128 <= base + size {
+                        let dma = cpm.disk.dma_addr as usize;
+                        cpm.cpu.mem.copy_within(offset..offset + 128, dma);
+                        cpm.cpu.a = 0;
+                    } else {
+                        cpm.cpu.a = 1; // EOF
+                    }
+                }
+                "devcpu" => {
+                    // Register dump as text
+                    let text = format!(
+                        "A={:02X} F={:02X} BC={:04X} DE={:04X} HL={:04X}\r\nSP={:04X} PC={:04X} IX={:04X} IY={:04X}\r\n",
+                        cpm.cpu.a, cpm.cpu.f, cpm.cpu.bc(), cpm.cpu.de(), cpm.cpu.hl(),
+                        cpm.cpu.sp, cpm.cpu.pc, cpm.cpu.ix, cpm.cpu.iy
+                    );
+                    let dma = cpm.disk.dma_addr as usize;
+                    let mut buf = [0x1Au8; 128];
+                    let n = text.len().min(127);
+                    buf[..n].copy_from_slice(&text.as_bytes()[..n]);
+                    cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
+                    cpm.cpu.a = 0;
+                }
                 _ => { cpm.cpu.a = 1; }
             }
             cpm.cpu.l = cpm.cpu.a; cpm.cpu.h = 0;
@@ -416,7 +464,7 @@ fn write_seq(cpm: &mut Cpm) {
     let drv = fcb::drive(&cpm.cpu, fcb_addr);
 
     // Network write: ctl or data
-    if let Some((ftype, id)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
+    if let Some((ftype, id, ext_str)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
         let dma = cpm.disk.dma_addr as usize;
         let data: Vec<u8> = (0..128).map(|i| cpm.cpu.mem[dma + i]).collect();
         if let Some(net) = cpm.disk.net_drive(drv) {
@@ -426,6 +474,22 @@ fn write_seq(cpm: &mut Cpm) {
                 "claude" | "cli" | "run" => { net.write_claude(&data); }
                 "apikey" => { net.set_api_key(&data); }
                 "setmodel" => { net.set_model(&data); }
+                "mem" => {
+                    let (base, size) = match ext_str.as_str() {
+                        "0" => (0x0000usize, 0x4000usize),
+                        "1" => (0x4000, 0x4000),
+                        "2" => (0x8000, 0x4000),
+                        "3" => (0xC000, 0x4000),
+                        "VDU" => (0xFC00, 0x0400),
+                        _ => (0, 0),
+                    };
+                    let cr = cpm.cpu.read8(fcb_addr + 32) as usize;
+                    let offset = base + cr * 128;
+                    if offset + 128 <= base + size {
+                        let dma = cpm.disk.dma_addr as usize;
+                        cpm.cpu.mem.copy_within(dma..dma + 128, offset);
+                    }
+                }
                 _ => {}
             }
             cpm.cpu.a = 0; cpm.cpu.l = 0; cpm.cpu.h = 0;
