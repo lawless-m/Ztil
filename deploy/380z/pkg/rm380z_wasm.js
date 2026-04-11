@@ -108,6 +108,15 @@ export class Emulator {
         wasm.emulator_hrg_write(this.__wbg_ptr, offset, value);
     }
     /**
+     * JS calls this to inject text as keystrokes (Claude RUN mode).
+     * @param {Uint8Array} data
+     */
+    inject_keys(data) {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.emulator_inject_keys(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
      * @returns {boolean}
      */
     is_running() {
