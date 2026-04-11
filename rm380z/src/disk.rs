@@ -142,9 +142,9 @@ impl NetDrive {
         self.api_key = key.trim().to_string();
     }
 
-    /// Get available model names.
+    /// Get current model name.
     pub fn get_models(&self) -> String {
-        format!("Current: {}\r\nclaude-haiku-4-5\r\nclaude-sonnet-4-5\r\nclaude-sonnet-4-6\r\nclaude-opus-4-6\r\n", self.model)
+        format!("{}\r\n", self.model)
     }
 
     /// Set the model (from CLAUDE.MDL file write).
