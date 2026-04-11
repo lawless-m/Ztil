@@ -456,9 +456,10 @@ impl Emulator {
         let fcb = self.cpu.de();
         if let Some((id, ftype)) = self.net_fcbs.remove(&fcb) {
             if ftype == "ctl" { self.net.close_conn(id); }
-            self.cpu.a = 0;
-        } else { self.cpu.a = 0xFF; }
-        self.cpu.l = self.cpu.a; self.cpu.h = 0;
+        }
+        self.open_handles.remove(&fcb);
+        self.cpu.a = 0; // always succeed (CP/M convention)
+        self.cpu.l = 0; self.cpu.h = 0;
     }
 
     fn bdos_read_seq(&mut self) {
