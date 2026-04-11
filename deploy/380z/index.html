@@ -101,6 +101,7 @@
   <button id="hrgDemo">HRG Demo</button>
   <button id="hiresBtn">640 Mode</button>
   <button id="clearHrg">Clear HRG</button>
+  <button id="copyVdu">Copy Screen</button>
   <div id="status">Type DIR, load .COM files, or click a program button.</div>
 </div>
 
@@ -545,6 +546,25 @@ document.getElementById('clearHrg').addEventListener('click', () => {
   if (!emu) return;
   emu.hrg_clear();
   textScreen.focus();
+});
+
+// Copy VDU screen to clipboard
+document.getElementById('copyVdu').addEventListener('click', () => {
+  if (!emu || !wasmMemory) return;
+  const ptr = emu.vdu_ptr();
+  const mem = new Uint8Array(wasmMemory.buffer, ptr, 960);
+  let text = '';
+  for (let row = 0; row < 24; row++) {
+    let line = '';
+    for (let col = 0; col < 40; col++) {
+      let ch = mem[row * 40 + col];
+      line += (ch >= 32 && ch <= 126) ? String.fromCharCode(ch) : ' ';
+    }
+    text += line.trimEnd() + '\n';
+  }
+  navigator.clipboard.writeText(text.trimEnd()).then(() => {
+    status.textContent = 'Screen copied to clipboard';
+  });
 });
 
 start();
