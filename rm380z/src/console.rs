@@ -1,39 +1,15 @@
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use std::io::{self, Write};
 use std::time::Duration;
 
-pub struct Console {
-    // Nothing stateful yet — all I/O goes directly through crossterm/stdout
-}
+/// Console handles keyboard input ONLY. All display output goes through the VDU.
+pub struct Console {}
 
 impl Console {
     pub fn new() -> Self {
         Console {}
     }
 
-    /// Print a single character to the terminal.
-    pub fn write_char(&mut self, ch: u8) {
-        let stdout = io::stdout();
-        let mut out = stdout.lock();
-        match ch {
-            0x0D => { let _ = out.write_all(b"\r"); }
-            0x0A => { let _ = out.write_all(b"\n"); }
-            0x07 | 0x08 | 0x09 => { let _ = out.write_all(&[ch]); }
-            0x20..=0x7E => { let _ = out.write_all(&[ch]); }
-            _ => {}
-        }
-        let _ = out.flush();
-    }
-
-    /// Print a string (for convenience).
-    pub fn write_str(&mut self, s: &str) {
-        let stdout = io::stdout();
-        let mut out = stdout.lock();
-        let _ = out.write_all(s.as_bytes());
-        let _ = out.flush();
-    }
-
-    /// Check if a key is available (non-blocking). Returns true if ready.
+    /// Check if a key is available (non-blocking).
     pub fn key_ready(&self) -> bool {
         event::poll(Duration::from_millis(0)).unwrap_or(false)
     }
@@ -48,7 +24,7 @@ impl Console {
                 if buf[0] == b'\n' { return 0x0D; }
                 return buf[0];
             }
-            return 0x1A; // EOF → Ctrl-Z
+            return 0x1A; // EOF
         }
         loop {
             if let Ok(Event::Key(KeyEvent { code, modifiers, .. })) = event::read() {
@@ -79,37 +55,6 @@ impl Console {
             Some(self.read_key())
         } else {
             None
-        }
-    }
-
-    /// BDOS function 10: buffered line input.
-    /// Buffer at addr: [max_len] [actual_len] [chars...]
-    /// We handle this entirely in Rust for simplicity.
-    pub fn read_line(&mut self, max_len: u8) -> Vec<u8> {
-        let mut buf = Vec::new();
-        loop {
-            let ch = self.read_key();
-            match ch {
-                0x0D => {
-                    self.write_char(0x0D);
-                    return buf;
-                }
-                0x08 | 0x7F => {
-                    if !buf.is_empty() {
-                        buf.pop();
-                        self.write_str("\x08 \x08");
-                    }
-                }
-                0x03 => {
-                    // Ctrl-C: return empty (warm boot signal)
-                    return Vec::new();
-                }
-                _ if ch >= 0x20 && buf.len() < max_len as usize => {
-                    buf.push(ch);
-                    self.write_char(ch);
-                }
-                _ => {}
-            }
         }
     }
 }

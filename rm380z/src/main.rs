@@ -68,9 +68,11 @@ fn main() {
         None
     };
 
-    eprint!("\x1b[2J\x1b[H"); // clear screen
-    eprintln!("RM 380Z CP/M 2.2\r");
-    eprintln!("\r");
+    // Clear host terminal and set up for VDU display
+    eprint!("\x1b[2J\x1b[H");
+
+    // Write banner to VDU
+    cpm.vdu_print("RM 380Z CP/M 2.2\r\n\r\n");
 
     cpm.run();
 }

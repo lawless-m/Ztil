@@ -77,25 +77,24 @@ fn sys_reset(cpm: &mut Cpm) {
 }
 
 fn con_read(cpm: &mut Cpm) {
+    cpm.vdu.render(&cpm.cpu.mem);
     let ch = cpm.console.read_key();
-    cpm.console.write_char(ch);
+    cpm.vdu_write(ch); // echo through VDU
     cpm.cpu.a = ch & 0x7F;
 }
 
 fn con_write(cpm: &mut Cpm) {
-    cpm.console.write_char(cpm.cpu.e);
+    cpm.vdu_write(cpm.cpu.e);
 }
 
 fn direct_io(cpm: &mut Cpm) {
     let e = cpm.cpu.e;
     if e == 0xFF {
-        // Input: return char or 0
         cpm.cpu.a = cpm.console.try_read_key().unwrap_or(0);
     } else if e == 0xFE {
-        // Status (CP/M 3 but some programs use it)
         cpm.cpu.a = if cpm.console.key_ready() { 0xFF } else { 0x00 };
     } else {
-        cpm.console.write_char(e);
+        cpm.vdu_write(e);
     }
 }
 
@@ -104,7 +103,7 @@ fn print_string(cpm: &mut Cpm) {
     loop {
         let ch = cpm.cpu.read8(addr);
         if ch == b'$' { break; }
-        cpm.console.write_char(ch);
+        cpm.vdu_write(ch);
         addr = addr.wrapping_add(1);
     }
 }
@@ -112,7 +111,7 @@ fn print_string(cpm: &mut Cpm) {
 fn read_line(cpm: &mut Cpm) {
     let buf_addr = cpm.cpu.de();
     let max_len = cpm.cpu.read8(buf_addr);
-    let line = cpm.console.read_line(max_len);
+    let line = cpm.read_line(max_len);
     cpm.cpu.write8(buf_addr + 1, line.len() as u8);
     for (i, &ch) in line.iter().enumerate() {
         cpm.cpu.write8(buf_addr + 2 + i as u16, ch);

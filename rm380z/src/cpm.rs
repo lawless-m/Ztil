@@ -3,6 +3,7 @@ use crate::bdos;
 use crate::ccp;
 use crate::console::Console;
 use crate::disk::DiskSystem;
+use crate::vdu::Vdu;
 use std::path::PathBuf;
 
 // CP/M 2.2 memory map for a 64K system
@@ -17,6 +18,7 @@ pub struct Cpm {
     pub cpu: Cpu,
     pub console: Console,
     pub disk: DiskSystem,
+    pub vdu: Vdu,
     pub running: bool,
 }
 
@@ -26,10 +28,14 @@ impl Cpm {
         setup_page_zero(&mut cpu);
         setup_bios_stubs(&mut cpu);
 
+        let mut vdu = Vdu::new();
+        vdu.init(&mut cpu.mem);
+
         Cpm {
             cpu,
             console: Console::new(),
             disk: DiskSystem::new(drive_a),
+            vdu,
             running: true,
         }
     }
@@ -38,6 +44,11 @@ impl Cpm {
         // Start at CCP
         self.cpu.pc = CCP_ENTRY;
         self.cpu.sp = BDOS_ADDR;
+
+        // Initial screen render
+        self.vdu.render(&self.cpu.mem);
+
+        let mut step_count = 0u32;
 
         loop {
             if !self.running {
@@ -48,6 +59,7 @@ impl Cpm {
             if self.cpu.pc >= BIOS_HANDLERS && self.cpu.pc < BIOS_HANDLERS + 17 {
                 let bios_func = (self.cpu.pc - BIOS_HANDLERS) as u8;
                 self.handle_bios(bios_func);
+                self.vdu.render(&self.cpu.mem);
                 continue;
             }
 
@@ -64,6 +76,7 @@ impl Cpm {
                 if func != 0 {
                     self.cpu.pc = self.cpu.pop16();
                 }
+                self.vdu.render(&self.cpu.mem);
                 continue;
             }
 
@@ -73,6 +86,60 @@ impl Cpm {
             }
 
             self.cpu.step();
+
+            // Periodic render for programs that write directly to VDU RAM
+            step_count += 1;
+            if step_count >= 10000 {
+                step_count = 0;
+                self.vdu.render(&self.cpu.mem);
+            }
+        }
+    }
+
+    /// Write a character through the VDU (used by BDOS, BIOS, and CCP).
+    pub fn vdu_write(&mut self, ch: u8) {
+        self.vdu.write_char(&mut self.cpu.mem, ch);
+    }
+
+    /// Write a string through the VDU.
+    pub fn vdu_print(&mut self, s: &str) {
+        for &ch in s.as_bytes() {
+            self.vdu.write_char(&mut self.cpu.mem, ch);
+        }
+    }
+
+    /// Read a line with VDU echo. Used by CCP and BDOS F10.
+    pub fn read_line(&mut self, max_len: u8) -> Vec<u8> {
+        self.vdu.render(&self.cpu.mem);
+        let mut buf = Vec::new();
+        loop {
+            let ch = self.console.read_key();
+            match ch {
+                0x0D => {
+                    self.vdu_print("\r\n");
+                    self.vdu.render(&self.cpu.mem);
+                    return buf;
+                }
+                0x08 | 0x7F => {
+                    if !buf.is_empty() {
+                        buf.pop();
+                        // Erase character on VDU: back, space, back
+                        self.vdu_write(0x08);
+                        self.vdu_write(b' ');
+                        self.vdu_write(0x08);
+                        self.vdu.render(&self.cpu.mem);
+                    }
+                }
+                0x03 => {
+                    return Vec::new();
+                }
+                _ if ch >= 0x20 && buf.len() < max_len as usize => {
+                    buf.push(ch);
+                    self.vdu_write(ch);
+                    self.vdu.render(&self.cpu.mem);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -101,13 +168,11 @@ impl Cpm {
 
         self.cpu.pc = TPA_BASE;
         self.cpu.sp = BDOS_ADDR;
-        // Push warm boot address so RET = JP 0000h (standard CP/M convention)
         self.cpu.push16(0x0000);
         self.disk.dma_addr = DMA_DEFAULT;
     }
 
-    /// Handle a direct BIOS call. Programs like MBASIC read the BIOS jump
-    /// table and call BIOS functions directly for performance.
+    /// Handle a direct BIOS call.
     fn handle_bios(&mut self, func: u8) {
         if std::env::var("CPM_TRACE").is_ok() {
             eprintln!("[BIOS] func={} C={:02X}", func, self.cpu.c);
@@ -119,21 +184,21 @@ impl Cpm {
                 self.cpu.a = if self.console.key_ready() { 0xFF } else { 0x00 };
             }
             3 => { /* CONIN */
+                self.vdu.render(&self.cpu.mem);
                 self.cpu.a = self.console.read_key() & 0x7F;
             }
             4 => { /* CONOUT */
-                self.console.write_char(self.cpu.c);
+                self.vdu.write_char(&mut self.cpu.mem, self.cpu.c);
             }
-            5 => { /* LIST */ } // printer — ignore
-            6 => { /* PUNCH */ } // paper tape — ignore
-            7 => { /* READER */ self.cpu.a = 0x1A; } // EOF
+            5 => { /* LIST */ }
+            6 => { /* PUNCH */ }
+            7 => { /* READER */ self.cpu.a = 0x1A; }
             _ => {
                 if std::env::var("CPM_TRACE").is_ok() {
                     eprintln!("[BIOS] unhandled function {}", func);
                 }
             }
         }
-        // BIOS functions were CALLed, so RET to return
         self.cpu.pc = self.cpu.pop16();
     }
 
@@ -147,35 +212,25 @@ impl Cpm {
 }
 
 fn setup_page_zero(cpu: &mut Cpu) {
-    // 0000h: JP BIOS_BASE+3 (warm boot entry)
     cpu.mem[0x0000] = 0xC3;
     cpu.write16(0x0001, BIOS_BASE + 3);
-
-    // 0003h: IOBYTE
     cpu.mem[0x0003] = 0x00;
-    // 0004h: current disk/user (drive A, user 0)
     cpu.mem[0x0004] = 0x00;
-
-    // 0005h: JP BDOS_ADDR (BDOS entry — intercepted before execution)
     cpu.mem[0x0005] = 0xC3;
     cpu.write16(0x0006, BDOS_ADDR);
 }
 
-/// Base address of BIOS handler area (after the 17×3 jump table).
-pub const BIOS_HANDLERS: u16 = BIOS_BASE + 17 * 3; // FA33
+/// Base address of BIOS handler area (after the 17x3 jump table).
+pub const BIOS_HANDLERS: u16 = BIOS_BASE + 17 * 3;
 
 fn setup_bios_stubs(cpu: &mut Cpu) {
-    // BIOS jump table: 17 entries × 3 bytes, each JP to a handler.
-    // Programs read these JP targets to call BIOS functions directly.
     for i in 0..17u16 {
         let entry = BIOS_BASE + i * 3;
         let handler = BIOS_HANDLERS + i;
-        cpu.mem[entry as usize] = 0xC3; // JP
+        cpu.mem[entry as usize] = 0xC3;
         cpu.write16(entry + 1, handler);
     }
-    // Handler area: each is a single RET (0xC9).
-    // We intercept PC in this range before execution.
     for i in 0..17u16 {
-        cpu.mem[(BIOS_HANDLERS + i) as usize] = 0xC9; // RET
+        cpu.mem[(BIOS_HANDLERS + i) as usize] = 0xC9;
     }
 }
