@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 use z80::cpu::Cpu;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 
 // Memory map
 const BDOS_ENTRY: u16 = 0x0005;
@@ -23,6 +23,22 @@ const HRG_BYTES_PER_ROW: usize = 40;
 const HRG_HEIGHT: usize = 192;
 const HRG_SIZE: usize = HRG_BYTES_PER_ROW * HRG_HEIGHT; // 7680 bytes
 
+/// A Plan 9-style network connection.
+struct NetConn {
+    proto: NetProto,
+    ctl_data: Vec<u8>,     // data written to ctl (verb + url + headers)
+    req_body: Vec<u8>,     // data written to data file (request body for POST/PUT)
+    resp_data: Vec<u8>,    // response data (filled by JS callback)
+    resp_pos: usize,       // read position in response
+    state: NetState,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum NetProto { Http, WebSocket }
+
+#[derive(Clone, Copy, PartialEq)]
+enum NetState { New, CtlWritten, RequestSent, ResponseReady, Done }
+
 #[wasm_bindgen]
 pub struct Emulator {
     cpu: Cpu,
@@ -30,13 +46,21 @@ pub struct Emulator {
     cursor_col: usize,
     key_buffer: VecDeque<u8>,
     waiting_for_key: bool,
+    waiting_for_net: Option<u8>,  // connection ID we're waiting on
     running: bool,
-    /// HRG framebuffer: 40 bytes/row × 192 rows. MSB = leftmost pixel.
     hrg: Box<[u8; HRG_SIZE]>,
     hrg_enabled: bool,
-    /// false = 320×192 (default), true = 640×192
     hrg_hires: bool,
+    // Network (Plan 9 model)
+    net_drive: Option<u8>,           // which drive letter is network (0=A, etc.)
+    net_conns: HashMap<u8, NetConn>, // connection ID → connection
+    net_next_id: u8,
+    // FCB tracking: maps FCB address → (conn_id, file_type)
+    net_fcbs: HashMap<u16, (u8, NetFileType)>,
 }
+
+#[derive(Clone, Copy, PartialEq)]
+enum NetFileType { Clone, Ctl, Data }
 
 #[wasm_bindgen]
 impl Emulator {
@@ -57,10 +81,15 @@ impl Emulator {
             cursor_col: 0,
             key_buffer: VecDeque::new(),
             waiting_for_key: false,
+            waiting_for_net: None,
             running: true,
             hrg: vec![0u8; HRG_SIZE].into_boxed_slice().try_into().unwrap(),
             hrg_enabled: false,
             hrg_hires: false,
+            net_drive: None,
+            net_conns: HashMap::new(),
+            net_next_id: 0,
+            net_fcbs: HashMap::new(),
         };
 
         // Print banner
@@ -105,7 +134,7 @@ impl Emulator {
 
         let mut steps = 0u32;
         while steps < max_steps {
-            if self.waiting_for_key { break; }
+            if self.waiting_for_key || self.waiting_for_net.is_some() { break; }
             if !self.running { break; }
 
             // BIOS handler intercept
@@ -207,6 +236,69 @@ impl Emulator {
         if offset < HRG_SIZE {
             self.hrg[offset] = value;
             self.hrg_enabled = true;
+        }
+    }
+
+    // --- Plan 9 Network Drive ---
+
+    /// Mount the network drive on a letter (0=A, 1=B, ...).
+    pub fn net_mount(&mut self, drive: u8) {
+        self.net_drive = Some(drive);
+    }
+
+    /// Check if waiting for a network response.
+    pub fn needs_net(&self) -> bool { self.waiting_for_net.is_some() }
+
+    /// Get the connection ID we're waiting on.
+    pub fn waiting_net_id(&self) -> i32 {
+        self.waiting_for_net.map(|id| id as i32).unwrap_or(-1)
+    }
+
+    /// Get the request details for a pending connection (for JS to execute).
+    /// Returns "VERB URL\nHeader: val\n..." or empty if no pending request.
+    pub fn net_get_request(&self, conn_id: u8) -> String {
+        match self.net_conns.get(&conn_id) {
+            Some(conn) if conn.state == NetState::CtlWritten => {
+                let mut req = String::from_utf8_lossy(&conn.ctl_data).to_string();
+                if !conn.req_body.is_empty() {
+                    req.push_str("\n\n");
+                    req.push_str(&String::from_utf8_lossy(&conn.req_body));
+                }
+                req
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Get just the request body bytes (for POST/PUT).
+    pub fn net_get_request_body(&self, conn_id: u8) -> Vec<u8> {
+        self.net_conns.get(&conn_id)
+            .map(|c| c.req_body.clone())
+            .unwrap_or_default()
+    }
+
+    /// JS calls this to deliver the HTTP response.
+    pub fn net_set_response(&mut self, conn_id: u8, data: &[u8]) {
+        if let Some(conn) = self.net_conns.get_mut(&conn_id) {
+            conn.resp_data = data.to_vec();
+            conn.resp_pos = 0;
+            conn.state = NetState::ResponseReady;
+        }
+        if self.waiting_for_net == Some(conn_id) {
+            self.waiting_for_net = None;
+        }
+    }
+
+    /// JS calls this to deliver WebSocket incoming data.
+    pub fn net_ws_receive(&mut self, conn_id: u8, data: &[u8]) {
+        if let Some(conn) = self.net_conns.get_mut(&conn_id) {
+            conn.resp_data.extend_from_slice(data);
+            if conn.state != NetState::ResponseReady {
+                conn.state = NetState::ResponseReady;
+            }
+        }
+        if self.waiting_for_net == Some(conn_id) {
+            self.waiting_for_net = None;
         }
     }
 }
@@ -313,13 +405,227 @@ impl Emulator {
                 self.cpu.l = 0x22;
                 self.cpu.h = 0x00;
             }
+            // File operations — network drive intercept
+            15 => self.bdos_open(),
+            16 => self.bdos_close(),
+            20 => self.bdos_read_seq(),
+            21 => self.bdos_write_seq(),
+            22 => self.bdos_make(),
             _ => {
-                // Unhandled — return 0
                 self.cpu.a = 0;
                 self.cpu.l = 0;
                 self.cpu.h = 0;
             }
         }
+    }
+
+    // --- BDOS File Operations (with network drive support) ---
+
+    fn fcb_name(&self, fcb: u16) -> [u8; 8] {
+        let mut n = [0u8; 8];
+        for i in 0..8 { n[i] = self.cpu.read8(fcb + 1 + i as u16); }
+        n
+    }
+    fn fcb_ext(&self, fcb: u16) -> [u8; 3] {
+        let mut e = [0u8; 3];
+        for i in 0..3 { e[i] = self.cpu.read8(fcb + 9 + i as u16); }
+        e
+    }
+    fn fcb_drive(&self, fcb: u16) -> u8 { self.cpu.read8(fcb) }
+
+    fn is_net_drive(&self, fcb_drive: u8) -> bool {
+        let Some(net_drv) = self.net_drive else { return false };
+        let d = if fcb_drive == 0 { 0 /* TODO: current disk */ } else { fcb_drive - 1 };
+        d == net_drv
+    }
+
+    /// Parse network filename: CLONE.HTTP, CLONE.WS, 0.CTL, 0.DATA, etc.
+    fn parse_net_filename(&self, fcb: u16) -> Option<(NetFileType, Option<u8>, NetProto)> {
+        let name = self.fcb_name(fcb);
+        let ext = self.fcb_ext(fcb);
+        let name_str: String = name.iter().map(|&b| (b & 0x7F) as char).collect::<String>();
+        let name_str = name_str.trim();
+        let ext_str: String = ext.iter().map(|&b| (b & 0x7F) as char).collect::<String>();
+        let ext_str = ext_str.trim();
+
+        if name_str == "CLONE" {
+            let proto = match ext_str {
+                "HTTP" => NetProto::Http,
+                "WS" => NetProto::WebSocket,
+                _ => return None,
+            };
+            return Some((NetFileType::Clone, None, proto));
+        }
+
+        // Numbered file: "0", "1", etc.
+        let id: u8 = name_str.parse().ok()?;
+        match ext_str {
+            "CTL" => Some((NetFileType::Ctl, Some(id), NetProto::Http)),
+            "DATA" => Some((NetFileType::Data, Some(id), NetProto::Http)),
+            _ => None,
+        }
+    }
+
+    fn bdos_open(&mut self) {
+        let fcb = self.cpu.de();
+        let drv = self.fcb_drive(fcb);
+
+        if self.is_net_drive(drv) {
+            if let Some((ftype, conn_id, _proto)) = self.parse_net_filename(fcb) {
+                match ftype {
+                    NetFileType::Clone => {
+                        // Allocate new connection — ID returned on first read
+                        let id = self.net_next_id;
+                        self.net_next_id += 1;
+                        self.net_fcbs.insert(fcb, (id, NetFileType::Clone));
+                        self.cpu.a = 0;
+                    }
+                    NetFileType::Ctl => {
+                        if let Some(id) = conn_id {
+                            self.net_fcbs.insert(fcb, (id, NetFileType::Ctl));
+                            self.cpu.a = 0;
+                        } else { self.cpu.a = 0xFF; }
+                    }
+                    NetFileType::Data => {
+                        if let Some(id) = conn_id {
+                            self.net_fcbs.insert(fcb, (id, NetFileType::Data));
+                            self.cpu.a = 0;
+                        } else { self.cpu.a = 0xFF; }
+                    }
+                }
+            } else {
+                self.cpu.a = 0xFF;
+            }
+        } else {
+            // Non-network: not supported in WASM (no filesystem)
+            self.cpu.a = 0xFF;
+        }
+        self.cpu.l = self.cpu.a;
+        self.cpu.h = 0;
+    }
+
+    fn bdos_close(&mut self) {
+        let fcb = self.cpu.de();
+        if let Some((conn_id, ftype)) = self.net_fcbs.remove(&fcb) {
+            if ftype == NetFileType::Ctl {
+                // Closing ctl tears down the connection
+                self.net_conns.remove(&conn_id);
+            }
+            self.cpu.a = 0;
+        } else {
+            self.cpu.a = 0xFF;
+        }
+        self.cpu.l = self.cpu.a;
+        self.cpu.h = 0;
+    }
+
+    fn bdos_read_seq(&mut self) {
+        let fcb = self.cpu.de();
+        if let Some(&(conn_id, ftype)) = self.net_fcbs.get(&fcb) {
+            match ftype {
+                NetFileType::Clone => {
+                    // Read from clone returns the connection ID as text
+                    let id = conn_id;
+                    // Create the connection now
+                    self.net_conns.entry(id).or_insert(NetConn {
+                        proto: NetProto::Http,
+                        ctl_data: Vec::new(),
+                        req_body: Vec::new(),
+                        resp_data: Vec::new(),
+                        resp_pos: 0,
+                        state: NetState::New,
+                    });
+                    let id_str = format!("{}\r\n", id);
+                    let mut buf = [0x1Au8; 128];
+                    let bytes = id_str.as_bytes();
+                    buf[..bytes.len()].copy_from_slice(bytes);
+                    let dma = 0x0080u16; // default DMA
+                    for i in 0..128 {
+                        self.cpu.write8(dma + i as u16, buf[i]);
+                    }
+                    self.cpu.a = 0;
+                }
+                NetFileType::Data => {
+                    // Read response data
+                    if let Some(conn) = self.net_conns.get_mut(&conn_id) {
+                        if conn.state == NetState::CtlWritten {
+                            // Need to send request — signal JS
+                            conn.state = NetState::RequestSent;
+                            self.waiting_for_net = Some(conn_id);
+                            return; // don't pop return addr, retry later
+                        }
+                        if conn.state == NetState::ResponseReady && conn.resp_pos < conn.resp_data.len() {
+                            let mut buf = [0x1Au8; 128];
+                            let remaining = conn.resp_data.len() - conn.resp_pos;
+                            let n = remaining.min(128);
+                            buf[..n].copy_from_slice(&conn.resp_data[conn.resp_pos..conn.resp_pos + n]);
+                            conn.resp_pos += 128;
+                            let dma = 0x0080u16;
+                            for i in 0..128 {
+                                self.cpu.write8(dma + i as u16, buf[i]);
+                            }
+                            self.cpu.a = 0;
+                        } else if conn.state == NetState::ResponseReady {
+                            self.cpu.a = 1; // EOF
+                        } else {
+                            // Waiting for response
+                            self.waiting_for_net = Some(conn_id);
+                            return;
+                        }
+                    } else {
+                        self.cpu.a = 1;
+                    }
+                }
+                _ => { self.cpu.a = 1; }
+            }
+        } else {
+            self.cpu.a = 1; // no file
+        }
+        self.cpu.l = self.cpu.a;
+        self.cpu.h = 0;
+    }
+
+    fn bdos_write_seq(&mut self) {
+        let fcb = self.cpu.de();
+        if let Some(&(conn_id, ftype)) = self.net_fcbs.get(&fcb) {
+            match ftype {
+                NetFileType::Ctl => {
+                    // Write to ctl: accumulate verb + URL + headers
+                    if let Some(conn) = self.net_conns.get_mut(&conn_id) {
+                        let dma = 0x0080u16;
+                        for i in 0..128 {
+                            let b = self.cpu.read8(dma + i as u16);
+                            if b == 0x1A { break; } // CP/M EOF
+                            conn.ctl_data.push(b);
+                        }
+                        conn.state = NetState::CtlWritten;
+                        self.cpu.a = 0;
+                    } else { self.cpu.a = 2; }
+                }
+                NetFileType::Data => {
+                    // Write to data: request body (for POST/PUT)
+                    if let Some(conn) = self.net_conns.get_mut(&conn_id) {
+                        let dma = 0x0080u16;
+                        for i in 0..128 {
+                            let b = self.cpu.read8(dma + i as u16);
+                            if b == 0x1A { break; }
+                            conn.req_body.push(b);
+                        }
+                        self.cpu.a = 0;
+                    } else { self.cpu.a = 2; }
+                }
+                _ => { self.cpu.a = 2; }
+            }
+        } else {
+            self.cpu.a = 2;
+        }
+        self.cpu.l = self.cpu.a;
+        self.cpu.h = 0;
+    }
+
+    fn bdos_make(&mut self) {
+        // Make = same as open for network files
+        self.bdos_open();
     }
 
     fn handle_bios(&mut self, func: u8) {

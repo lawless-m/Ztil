@@ -97,6 +97,7 @@
   <button id="hrgDemo">HRG Demo</button>
   <button id="hiresBtn">640 Mode</button>
   <button id="clearHrg">Clear HRG</button>
+  <button id="netBtn">Mount N: net</button>
   <div id="status">Click text screen to type. Load a .COM file to run.</div>
 </div>
 
@@ -193,14 +194,66 @@ function esc(c) {
   return c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '&' ? '&amp;' : c;
 }
 
-function runLoop() {
+async function runLoop() {
   if (!emu) return;
-  if (emu.is_running() && !emu.needs_key()) {
+  if (emu.is_running() && !emu.needs_key() && !emu.needs_net()) {
     emu.run(50000);
+  }
+  // Handle pending network requests
+  if (emu.needs_net()) {
+    const connId = emu.waiting_net_id();
+    if (connId >= 0) {
+      const req = emu.net_get_request(connId);
+      if (req) {
+        try {
+          await handleNetRequest(connId, req);
+        } catch(e) {
+          const errMsg = new TextEncoder().encode('ERROR: ' + e.message + '\r\n');
+          emu.net_set_response(connId, errMsg);
+        }
+      }
+    }
   }
   renderVDU();
   renderHRG();
   requestAnimationFrame(runLoop);
+}
+
+async function handleNetRequest(connId, req) {
+  // Parse "VERB URL\nHeaders..." format
+  const lines = req.split('\n');
+  const firstLine = lines[0].trim();
+  const spaceIdx = firstLine.indexOf(' ');
+  if (spaceIdx < 0) return;
+
+  const verb = firstLine.substring(0, spaceIdx).toUpperCase();
+  const url = firstLine.substring(spaceIdx + 1).trim();
+
+  // Collect headers
+  const headers = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) break;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx > 0) {
+      headers[line.substring(0, colonIdx).trim()] = line.substring(colonIdx + 1).trim();
+    }
+  }
+
+  // Get body for POST/PUT
+  const body = emu.net_get_request_body(connId);
+  const hasBody = body.length > 0 && (verb === 'POST' || verb === 'PUT' || verb === 'PATCH');
+
+  status.textContent = `${verb} ${url}...`;
+
+  const opts = { method: verb, headers };
+  if (hasBody) opts.body = new Uint8Array(body);
+
+  const resp = await fetch(url);
+  const data = new Uint8Array(await resp.arrayBuffer());
+  emu.net_set_response(connId, data);
+
+  status.textContent = `${verb} ${url} — ${resp.status} (${data.length} bytes)`;
 }
 
 // Keyboard — capture on text screen
@@ -279,6 +332,14 @@ document.getElementById('hiresBtn').addEventListener('click', () => {
 document.getElementById('clearHrg').addEventListener('click', () => {
   if (!emu) return;
   emu.hrg_clear();
+  textScreen.focus();
+});
+
+// Mount network drive
+document.getElementById('netBtn').addEventListener('click', () => {
+  if (!emu) return;
+  emu.net_mount(13); // N = 13 (0=A, 13=N)
+  status.textContent = 'Network mounted on N: — use N:CLONE.HTTP, N:0.CTL, N:0.DATA';
   textScreen.focus();
 });
 
