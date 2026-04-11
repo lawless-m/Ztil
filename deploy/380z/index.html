@@ -606,8 +606,30 @@ document.getElementById('copyVdu').addEventListener('click', () => {
   });
 });
 
-window.openManual = function(which) {
-  window.open('manual-' + which + '.html', which + '_manual', 'popup=yes,width=600,height=700,scrollbars=yes');
+window.openManual = async function(which) {
+  let panel = document.getElementById('manual-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'manual-panel';
+    panel.style.cssText = 'position:fixed;right:20px;top:20px;width:500px;max-height:80vh;overflow-y:auto;' +
+      'background:#111;border:2px solid #0a0;border-radius:8px;padding:16px;z-index:9999;' +
+      'box-shadow:0 0 30px rgba(0,255,0,0.3);font-family:monospace;color:#0f0;font-size:13px;line-height:1.4';
+    const close = document.createElement('button');
+    close.textContent = 'X';
+    close.style.cssText = 'position:absolute;right:8px;top:8px;background:#0a0;color:#000;border:none;' +
+      'padding:2px 8px;cursor:pointer;font-family:monospace;border-radius:3px';
+    close.onclick = () => panel.style.display = 'none';
+    panel.appendChild(close);
+    const content = document.createElement('div');
+    content.id = 'manual-content';
+    panel.appendChild(content);
+    document.body.appendChild(panel);
+  }
+  const resp = await fetch('manual-' + which + '.html');
+  const html = await resp.text();
+  const match = html.match(/<body>([\s\S]*)<\/body>/i);
+  document.getElementById('manual-content').innerHTML = match ? match[1] : html;
+  panel.style.display = 'block';
 };
 
 function typeFile(name) {
