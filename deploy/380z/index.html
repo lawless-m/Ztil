@@ -45,6 +45,8 @@
     min-height: 28.8em;
     outline: none;
     padding: 4px;
+    user-select: text;
+    cursor: text;
   }
   #text-screen .cursor {
     background: #0f0;
@@ -99,8 +101,7 @@
   <button id="hrgDemo">HRG Demo</button>
   <button id="hiresBtn">640 Mode</button>
   <button id="clearHrg">Clear HRG</button>
-  <button id="netBtn">Mount N: net</button>
-  <div id="status">Click text screen to type. Load a .COM or click a program button.</div>
+  <div id="status">Type DIR, load .COM files, or click a program button.</div>
 </div>
 
 <script type="module">
@@ -414,7 +415,6 @@ document.addEventListener('keydown', (e) => {
   else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
   else if (e.key.length === 1) ch = e.key.charCodeAt(0);
   if (ch === 0 || ch >= 128) return;
-  status.textContent = `key=${ch} running=${emu.is_running()}`;
 
   if (!emu.is_running()) {
     // CCP mode: handle locally
@@ -544,14 +544,6 @@ document.getElementById('hiresBtn').addEventListener('click', () => {
 document.getElementById('clearHrg').addEventListener('click', () => {
   if (!emu) return;
   emu.hrg_clear();
-  textScreen.focus();
-});
-
-// Mount network drive
-document.getElementById('netBtn').addEventListener('click', () => {
-  if (!emu) return;
-  emu.net_mount(13); // N = 13 (0=A, 13=N)
-  status.textContent = 'Network mounted on N: — use N:CLONE.WWW, N:0.CTL, N:0.DATA';
   textScreen.focus();
 });
 
