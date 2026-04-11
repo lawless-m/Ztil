@@ -659,18 +659,31 @@ window.openManual = async function(which) {
 function typeFile(name) {
   if (!emu) return;
   const n = name.toUpperCase();
-  // N: device files - readable ones
-  if (n === 'N:CLAUDE.MNS') {
-    emu.vdu_print(emu.net.get_model_info ? 'claude-sonnet-4-5\r\n' : 'Unknown\r\n');
-    return;
-  }
-  if (n === 'N:DEV.CPU') {
-    // Would need to read from emulator - show placeholder
-    emu.vdu_print('A=' + emu.cursor_row().toString(16).toUpperCase().padStart(2,'0') + ' (use a .COM program for full dump)\r\n');
+  const data = emu.get_file(n);
+  if (data && data.length > 0) {
+    if (n.endsWith('.COM')) {
+      // Hex dump for binaries
+      const len = Math.min(data.length, 256);
+      for (let i = 0; i < len; i += 16) {
+        let hex = '', asc = '';
+        for (let j = 0; j < 16 && i+j < len; j++) {
+          const b = data[i+j];
+          hex += b.toString(16).toUpperCase().padStart(2,'0') + ' ';
+          asc += (b >= 32 && b < 127) ? String.fromCharCode(b) : '.';
+        }
+        emu.vdu_print(hex.padEnd(49) + asc + '\r\n');
+      }
+      if (data.length > 256) emu.vdu_print('...\r\n');
+    } else {
+      for (let i = 0; i < data.length; i++) {
+        if (data[i] === 0x1A) break;
+        emu.vdu_write(data[i]);
+      }
+    }
     return;
   }
   if (n.startsWith('N:')) {
-    emu.vdu_print('Use a .COM program to access N: files\r\n');
+    emu.vdu_print('Use a .COM to access N:\r\n');
     return;
   }
   emu.vdu_print('File not found\r\n');

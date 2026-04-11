@@ -134,6 +134,11 @@ impl Emulator {
         self.files.insert(name.to_uppercase(), data.to_vec());
     }
 
+    /// Get a stored file's contents.
+    pub fn get_file(&self, name: &str) -> Option<Vec<u8>> {
+        self.files.get(&name.to_uppercase()).cloned()
+    }
+
     /// List stored file names.
     pub fn list_files(&self) -> Vec<String> {
         let mut names: Vec<String> = self.files.keys().cloned().collect();

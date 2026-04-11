@@ -62,6 +62,22 @@ export class Emulator {
         const ret = wasm.emulator_cursor_row(this.__wbg_ptr);
         return ret >>> 0;
     }
+    /**
+     * Get a stored file's contents.
+     * @param {string} name
+     * @returns {Uint8Array | undefined}
+     */
+    get_file(name) {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.emulator_get_file(this.__wbg_ptr, ptr0, len0);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
     hrg_clear() {
         wasm.emulator_hrg_clear(this.__wbg_ptr);
     }
