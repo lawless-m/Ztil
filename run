@@ -1,0 +1,2 @@
+#!/bin/sh
+cargo run -p rm380z -- --drive-a /home/matt/Git/Ztil/disks/a "$@"

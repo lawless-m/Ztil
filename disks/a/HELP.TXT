@@ -1,0 +1,41 @@
+RM 380Z CP/M 2.2 Quick Reference
+=================================
+
+Commands (type at A> prompt):
+  DIR           List files on disk
+  DIR *.COM     List only .COM files
+  TYPE file     Display text file
+  ERA file      Delete file
+  REN new=old   Rename file
+  EXIT          Quit emulator
+
+Programs on this disk:
+  MBASIC        Microsoft BASIC interpreter
+  ED file       Line editor (i=insert, e=save+exit)
+  STAT          Disk/file status
+  DUMP file     Hex dump a file
+  PIP d=s       Copy file (PIP COPY.TXT=ORIG.TXT)
+  DDT           Z80 debugger
+  ASM file      8080 assembler (reads .ASM, makes .HEX)
+  LOAD file     Convert .HEX to .COM
+  SARGON        Chess game
+
+MBASIC quick start:
+  A>MBASIC
+  10 PRINT "HELLO"
+  20 FOR I=1 TO 10
+  30 PRINT I*I
+  40 NEXT I
+  RUN
+  SAVE "MYPROG"
+  SYSTEM          (back to CP/M)
+  A>MBASIC MYPROG  (reload it)
+
+ED quick start:
+  A>ED MYFILE.TXT
+  *I              (insert mode)
+  type lines...
+  ^Z              (Ctrl-Z to end insert)
+  *E              (save and exit)
+
+Type: TYPE HELP.TXT  to see this again.
