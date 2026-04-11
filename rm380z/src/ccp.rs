@@ -12,13 +12,17 @@ pub fn run(cpm: &mut Cpm) {
 
         if line.is_empty() { continue; }
 
-        let line_str = String::from_utf8_lossy(&line).to_uppercase();
-        let line_str = line_str.trim().to_string();
-        if line_str.is_empty() { continue; }
+        let raw_line = String::from_utf8_lossy(&line).trim().to_string();
+        if raw_line.is_empty() { continue; }
 
-        let (cmd, args) = match line_str.find(' ') {
-            Some(pos) => (line_str[..pos].to_string(), line_str[pos + 1..].trim().to_string()),
-            None => (line_str.clone(), String::new()),
+        // Uppercase the command but preserve original case for args (paths)
+        let (cmd, args, raw_args) = match raw_line.find(' ') {
+            Some(pos) => (
+                raw_line[..pos].to_uppercase(),
+                raw_line[pos + 1..].trim().to_uppercase(),
+                raw_line[pos + 1..].trim().to_string(),
+            ),
+            None => (raw_line.to_uppercase(), String::new(), String::new()),
         };
 
         match cmd.as_str() {
@@ -26,13 +30,14 @@ pub fn run(cpm: &mut Cpm) {
             "TYPE" => cmd_type(cpm, &args),
             "ERA" | "ERASE" => cmd_era(cpm, &args),
             "REN" | "RENAME" => cmd_ren(cpm, &args),
+            "MOUNT" => cmd_mount(cpm, &raw_args),
             "USER" => {}
             "EXIT" => { cpm.running = false; return; }
             _ => {
                 // Drive switch: "B:" or "A:" etc.
                 if cmd.len() == 2 && cmd.as_bytes()[1] == b':' {
                     let drv = cmd.as_bytes()[0] - b'A';
-                    if cpm.disk.drive_path(drv + 1).is_some() {
+                    if cpm.disk.is_mounted(drv + 1) {
                         cpm.disk.current_disk = drv;
                     } else {
                         cpm.vdu_print("Invalid drive\r\n");
@@ -124,6 +129,23 @@ fn cmd_ren(cpm: &mut Cpm, args: &str) {
     let new_path = parse_host_path(cpm, new_name);
     if std::fs::rename(&old_path, &new_path).is_err() {
         cpm.vdu_print("File not found\r\n");
+    }
+}
+
+fn cmd_mount(cpm: &mut Cpm, args: &str) {
+    // MOUNT B: /path/to/dir   or   MOUNT B: disk.dsk
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    if parts.len() < 2 || parts[0].len() != 2 || !parts[0].ends_with(':') {
+        cpm.vdu_print("Usage: MOUNT B: path\r\n");
+        return;
+    }
+    let drv = parts[0].as_bytes()[0].to_ascii_uppercase() - b'A';
+    let path = std::path::PathBuf::from(parts[1].trim());
+    cpm.disk.mount(drv, path);
+    if cpm.disk.is_mounted(drv + 1) {
+        cpm.vdu_print(&format!("{}:=OK\r\n", (b'A' + drv) as char));
+    } else {
+        cpm.vdu_print("Mount failed\r\n");
     }
 }
 
