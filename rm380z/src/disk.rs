@@ -19,6 +19,7 @@ pub struct NetDrive {
     pub next_id: u8,
     pub claude: Option<ClaudeConn>,
     pub api_key: String,
+    pub model: String,
 }
 
 struct NetConn {
@@ -45,7 +46,11 @@ pub enum NetFileType { Clone, Ctl, Data }
 
 impl NetDrive {
     pub fn new() -> Self {
-        NetDrive { conns: HashMap::new(), next_id: 0, claude: None, api_key: String::new() }
+        NetDrive {
+            conns: HashMap::new(), next_id: 0, claude: None,
+            api_key: String::new(),
+            model: "claude-sonnet-4-20250514".to_string(),
+        }
     }
 
     /// Open CLAUDE.AI — creates a new conversation.
@@ -78,7 +83,8 @@ impl NetDrive {
                 claude.resp_data = b"ERROR: No API key. Write key to N:CLAUDE.KEY\r\n".to_vec();
             } else {
                 let body = format!(
-                    r#"{{"model":"claude-sonnet-4-20250514","max_tokens":1024,"messages":[{{"role":"user","content":"{}"}}]}}"#,
+                    r#"{{"model":"{}","max_tokens":1024,"messages":[{{"role":"user","content":"{}"}}]}}"#,
+                    self.model,
                     prompt.replace('\\', "\\\\").replace('"', "\\\"")
                 );
                 let result = ureq::post("https://api.anthropic.com/v1/messages")
@@ -134,6 +140,19 @@ impl NetDrive {
         let key: String = data.iter().take_while(|&&b| b != 0x1A && b != b'\r' && b != b'\n')
             .map(|&b| b as char).collect();
         self.api_key = key.trim().to_string();
+    }
+
+    /// Get available model names.
+    pub fn get_models(&self) -> String {
+        format!("{}\r\nclaude-sonnet-4-20250514\r\nclaude-haiku-4-5-20251001\r\nclaude-opus-4-6\r\n", self.model)
+    }
+
+    /// Set the model (from CLAUDE.MDL file write).
+    pub fn set_model(&mut self, data: &[u8]) {
+        let model: String = data.iter().take_while(|&&b| b != 0x1A && b != b'\r' && b != b'\n')
+            .map(|&b| b as char).collect();
+        let model = model.trim().to_string();
+        if !model.is_empty() { self.model = model; }
     }
 
     pub fn clone_conn(&mut self) -> u8 {
