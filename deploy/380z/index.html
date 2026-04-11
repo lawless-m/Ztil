@@ -456,7 +456,11 @@ document.addEventListener('keydown', (e) => {
       emu.vdu_print('\r\n');
       const cmd = ccpLine.trim().toUpperCase();
       ccpLine = '';
-      if (cmd === 'DIR') {
+      const netFiles = ['CLONE.WWW','CLONE.WSK','CLAUDE.AI','CLAUDE.CLI',
+        'CLAUDE.RUN','CLAUDE.KEY','CLAUDE.MDL','CLAUDE.MNS',
+        'MEM.0','MEM.1','MEM.2','MEM.3','MEM.VDU','DEV.CPU'];
+
+      if (cmd === 'DIR' || cmd === 'DIR A:') {
         const files = emu.list_files();
         if (files.length === 0) {
           emu.vdu_print('No file\r\n');
@@ -470,8 +474,17 @@ document.addEventListener('keydown', (e) => {
           if (col > 0) emu.vdu_print('\r\n');
         }
         emu.vdu_print('A>');
+      } else if (cmd === 'DIR N:') {
+        let col = 0;
+        for (const f of netFiles) {
+          emu.vdu_print(f.padEnd(13));
+          col++;
+          if (col >= 3) { emu.vdu_print('\r\n'); col = 0; }
+        }
+        if (col > 0) emu.vdu_print('\r\n');
+        emu.vdu_print('A>');
       } else if (cmd === 'HELP') {
-        typeFile('HELP.TXT');
+        openManual('cpm');
         emu.vdu_print('A>');
       } else if (cmd.startsWith('TYPE ') && cmd.length > 5) {
         typeFile(cmd.substring(5).trim());
@@ -480,7 +493,7 @@ document.addEventListener('keydown', (e) => {
         emu.vdu_print('Bye.\r\n');
       } else if (cmd) {
         if (emu.load_com_by_name(cmd)) {
-          status.textContent = `Running ${cmd}`;
+          status.textContent = 'Running ' + cmd;
         } else {
           emu.vdu_print(cmd + '?\r\n');
           emu.vdu_print('A>');
@@ -644,10 +657,21 @@ window.openManual = async function(which) {
 
 function typeFile(name) {
   if (!emu) return;
-  // Look for file in stored files
-  const files = emu.list_files();
-  const key = name.toUpperCase();
-  // Just show "File not found" for now since text files aren't in the WASM store
+  const n = name.toUpperCase();
+  // N: device files - readable ones
+  if (n === 'N:CLAUDE.MNS') {
+    emu.vdu_print(emu.net.get_model_info ? 'claude-sonnet-4-5\r\n' : 'Unknown\r\n');
+    return;
+  }
+  if (n === 'N:DEV.CPU') {
+    // Would need to read from emulator - show placeholder
+    emu.vdu_print('A=' + emu.cursor_row().toString(16).toUpperCase().padStart(2,'0') + ' (use a .COM program for full dump)\r\n');
+    return;
+  }
+  if (n.startsWith('N:')) {
+    emu.vdu_print('Use a .COM program to access N: files\r\n');
+    return;
+  }
   emu.vdu_print('File not found\r\n');
 }
 
