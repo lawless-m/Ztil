@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>RM 380Z</title>
 <style>
+  * { box-sizing: border-box; }
   body {
     background: #111;
     color: #0f0;
@@ -12,68 +13,91 @@
     flex-direction: column;
     align-items: center;
     padding: 20px;
+    margin: 0;
   }
   h1 { color: #0a0; font-size: 18px; margin-bottom: 10px; }
-  #display {
-    position: relative;
+  #monitors {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  .monitor {
     border: 2px solid #0a0;
-    border-radius: 8px;
-    box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
-    overflow: hidden;
+    border-radius: 12px;
+    padding: 12px;
+    background: #0a0a0a;
+    box-shadow: 0 0 30px rgba(0, 255, 0, 0.15);
+  }
+  .monitor-label {
+    color: #0a0;
+    font-size: 11px;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  #text-screen {
+    background: #000;
+    color: #0f0;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    line-height: 1.2;
+    white-space: pre;
+    width: 40ch;
+    min-height: 28.8em;
+    outline: none;
+    padding: 4px;
+  }
+  #text-screen .cursor {
+    background: #0f0;
+    color: #000;
   }
   #hrg-canvas {
     display: block;
     background: #000;
     image-rendering: pixelated;
   }
-  #text-overlay {
-    position: absolute;
-    top: 0; left: 0;
-    color: #0f0;
-    font-family: 'Courier New', monospace;
-    font-size: 16px;
-    line-height: 1;
-    white-space: pre;
-    pointer-events: none;
-    padding: 0;
-    margin: 0;
-  }
-  #text-overlay .cursor {
-    background: #0f0;
-    color: #000;
-  }
   #controls {
-    margin-top: 10px;
+    margin-top: 12px;
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
   }
   button {
     background: #0a0;
     color: #000;
     border: none;
-    padding: 8px 16px;
+    padding: 6px 12px;
     font-family: monospace;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     border-radius: 4px;
   }
   button:hover { background: #0f0; }
-  #status { color: #0a0; font-size: 12px; }
-  input[type=file] { color: #0a0; font-size: 12px; }
+  button.active { background: #ff0; }
+  #status { color: #0a0; font-size: 11px; width: 100%; text-align: center; }
+  input[type=file] { display: none; }
 </style>
 </head>
 <body>
 <h1>Research Machines 380Z</h1>
-<div id="display" tabindex="0">
-  <canvas id="hrg-canvas" width="640" height="384"></canvas>
-  <div id="text-overlay"></div>
+<div id="monitors">
+  <div class="monitor">
+    <div class="monitor-label">VDU — 40×24 TEXT</div>
+    <div id="text-screen" tabindex="0"></div>
+  </div>
+  <div class="monitor">
+    <div class="monitor-label">HRG — <span id="hrg-mode">320×192</span> GRAPHICS</div>
+    <canvas id="hrg-canvas" width="640" height="384"></canvas>
+  </div>
 </div>
 <div id="controls">
   <button id="loadBtn">Load .COM</button>
-  <input type="file" id="fileInput" accept=".com,.COM" style="display:none">
+  <input type="file" id="fileInput" accept=".com,.COM">
   <button id="hrgDemo">HRG Demo</button>
-  <span id="status">Click display to type. Load a .COM file to run.</span>
+  <button id="hiresBtn">640 Mode</button>
+  <button id="clearHrg">Clear HRG</button>
+  <div id="status">Click text screen to type. Load a .COM file to run.</div>
 </div>
 
 <script type="module">
@@ -82,25 +106,18 @@ import init, { Emulator } from '../pkg/rm380z_wasm.js';
 let emu = null;
 let wasmMemory = null;
 
-const display = document.getElementById('display');
+const textScreen = document.getElementById('text-screen');
 const canvas = document.getElementById('hrg-canvas');
 const ctx = canvas.getContext('2d');
-const textOverlay = document.getElementById('text-overlay');
+const hrgModeLabel = document.getElementById('hrg-mode');
 const status = document.getElementById('status');
 const fileInput = document.getElementById('fileInput');
-const loadBtn = document.getElementById('loadBtn');
-const hrgDemoBtn = document.getElementById('hrgDemo');
-
-// Canvas is 640x384 = 2x scale of 320x192
-const SCALE = 2;
-const HRG_W = 320;
-const HRG_H = 192;
 
 async function start() {
   const wasm = await init();
   wasmMemory = wasm.memory;
   emu = new Emulator();
-  display.focus();
+  textScreen.focus();
   runLoop();
 }
 
@@ -118,18 +135,26 @@ function renderVDU() {
       if (ch < 32 || ch > 126) ch = 32;
       const c = String.fromCharCode(ch);
       if (row === curRow && col === curCol) {
-        html += '<span class="cursor">' + escHtml(c) + '</span>';
+        html += '<span class="cursor">' + esc(c) + '</span>';
       } else {
-        html += escHtml(c);
+        html += esc(c);
       }
     }
     if (row < 23) html += '\n';
   }
-  textOverlay.innerHTML = html;
+  textScreen.innerHTML = html;
 }
 
 function renderHRG() {
   if (!emu || !wasmMemory) return;
+  const w = emu.hrg_width();
+  const h = emu.hrg_height();
+  const hires = emu.hrg_is_hires();
+
+  // Update canvas size if mode changed
+  const cw = hires ? 640 : 640; // always 640px wide
+  const ch = 384; // always 2x height
+  if (canvas.width !== cw) canvas.width = cw;
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -137,27 +162,25 @@ function renderHRG() {
   if (!emu.hrg_enabled()) return;
 
   const ptr = emu.hrg_ptr();
-  const mem = new Uint8Array(wasmMemory.buffer, ptr, HRG_W / 8 * HRG_H);
-
+  const mem = new Uint8Array(wasmMemory.buffer, ptr, 40 * 192);
   const imgData = ctx.createImageData(canvas.width, canvas.height);
-  const pixels = imgData.data;
+  const px = imgData.data;
 
-  for (let y = 0; y < HRG_H; y++) {
-    for (let byteX = 0; byteX < HRG_W / 8; byteX++) {
-      const byte = mem[y * (HRG_W / 8) + byteX];
+  const scaleX = hires ? 1 : 2;
+  const scaleY = 2;
+
+  for (let y = 0; y < 192; y++) {
+    for (let byteX = 0; byteX < 40; byteX++) {
+      const byte = mem[y * 40 + byteX];
+      if (byte === 0) continue; // skip empty bytes
       for (let bit = 0; bit < 8; bit++) {
-        const on = (byte >> (7 - bit)) & 1;
-        if (on) {
-          const px = byteX * 8 + bit;
-          // Draw scaled pixel
-          for (let sy = 0; sy < SCALE; sy++) {
-            for (let sx = 0; sx < SCALE; sx++) {
-              const idx = ((y * SCALE + sy) * canvas.width + px * SCALE + sx) * 4;
-              pixels[idx] = 0;       // R
-              pixels[idx+1] = 255;   // G
-              pixels[idx+2] = 0;     // B
-              pixels[idx+3] = 255;   // A
-            }
+        if (!((byte >> (7 - bit)) & 1)) continue;
+        const pixX = byteX * 8 + bit;
+        for (let sy = 0; sy < scaleY; sy++) {
+          for (let sx = 0; sx < scaleX; sx++) {
+            const idx = ((y * scaleY + sy) * canvas.width + pixX * scaleX + sx) * 4;
+            px[idx+1] = 255; // green
+            px[idx+3] = 255; // alpha
           }
         }
       }
@@ -166,11 +189,8 @@ function renderHRG() {
   ctx.putImageData(imgData, 0, 0);
 }
 
-function escHtml(c) {
-  if (c === '<') return '&lt;';
-  if (c === '>') return '&gt;';
-  if (c === '&') return '&amp;';
-  return c;
+function esc(c) {
+  return c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '&' ? '&amp;' : c;
 }
 
 function runLoop() {
@@ -178,16 +198,15 @@ function runLoop() {
   if (emu.is_running() && !emu.needs_key()) {
     emu.run(50000);
   }
-  renderHRG();
   renderVDU();
+  renderHRG();
   requestAnimationFrame(runLoop);
 }
 
-// Keyboard
-display.addEventListener('keydown', (e) => {
+// Keyboard — capture on text screen
+textScreen.addEventListener('keydown', (e) => {
   if (!emu) return;
   e.preventDefault();
-
   let ch = 0;
   if (e.key === 'Enter') ch = 0x0D;
   else if (e.key === 'Backspace') ch = 0x08;
@@ -195,59 +214,72 @@ display.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') ch = 0x1B;
   else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
   else if (e.key.length === 1) ch = e.key.charCodeAt(0);
-
-  if (ch > 0 && ch < 128) {
-    emu.key_press(ch);
-  }
+  if (ch > 0 && ch < 128) emu.key_press(ch);
 });
 
 // File loading
-loadBtn.addEventListener('click', () => fileInput.click());
+document.getElementById('loadBtn').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const data = new Uint8Array(await file.arrayBuffer());
   emu.load_com(data);
   status.textContent = `Loaded ${file.name} (${data.length} bytes)`;
-  display.focus();
+  textScreen.focus();
 });
 
-// HRG demo — draw some graphics to test the display
-hrgDemoBtn.addEventListener('click', () => {
+// HRG demo
+document.getElementById('hrgDemo').addEventListener('click', () => {
   if (!emu) return;
+  const w = emu.hrg_width(), h = emu.hrg_height();
   emu.hrg_clear();
   emu.hrg_toggle(true);
 
-  // Draw border
-  for (let x = 0; x < HRG_W; x++) {
-    emu.hrg_set_pixel(x, 0);
-    emu.hrg_set_pixel(x, HRG_H - 1);
-  }
-  for (let y = 0; y < HRG_H; y++) {
-    emu.hrg_set_pixel(0, y);
-    emu.hrg_set_pixel(HRG_W - 1, y);
+  // Border
+  for (let x = 0; x < w; x++) { emu.hrg_set_pixel(x, 0); emu.hrg_set_pixel(x, h-1); }
+  for (let y = 0; y < h; y++) { emu.hrg_set_pixel(0, y); emu.hrg_set_pixel(w-1, y); }
+
+  // Diagonals
+  for (let i = 0; i < h; i++) {
+    emu.hrg_set_pixel(Math.floor(i * w / h), i);
+    emu.hrg_set_pixel(w - 1 - Math.floor(i * w / h), i);
   }
 
-  // Draw diagonals
-  for (let i = 0; i < HRG_H; i++) {
-    const x1 = Math.floor(i * HRG_W / HRG_H);
-    emu.hrg_set_pixel(x1, i);
-    emu.hrg_set_pixel(HRG_W - 1 - x1, i);
-  }
-
-  // Draw circle
-  const cx = HRG_W / 2, cy = HRG_H / 2, r = 80;
-  for (let a = 0; a < 360; a++) {
-    const rad = a * Math.PI / 180;
+  // Circle
+  const cx = w/2, cy = h/2, r = Math.min(w, h) * 0.4;
+  for (let a = 0; a < 720; a++) {
+    const rad = a * Math.PI / 360;
     const x = Math.floor(cx + r * Math.cos(rad));
     const y = Math.floor(cy + r * Math.sin(rad));
-    if (x >= 0 && x < HRG_W && y >= 0 && y < HRG_H) {
-      emu.hrg_set_pixel(x, y);
-    }
+    if (x >= 0 && x < w && y >= 0 && y < h) emu.hrg_set_pixel(x, y);
   }
 
-  status.textContent = 'HRG demo: border, diagonals, circle (320×192)';
-  display.focus();
+  // Sine wave
+  for (let x = 10; x < w - 10; x++) {
+    const y = Math.floor(cy + Math.sin(x * 0.05) * 40);
+    if (y >= 0 && y < h) emu.hrg_set_pixel(x, y);
+  }
+
+  status.textContent = `HRG demo (${w}×${h})`;
+  textScreen.focus();
+});
+
+// 640 mode toggle
+document.getElementById('hiresBtn').addEventListener('click', () => {
+  if (!emu) return;
+  const hires = !emu.hrg_is_hires();
+  emu.hrg_set_hires(hires);
+  hrgModeLabel.textContent = hires ? '640×192' : '320×192';
+  document.getElementById('hiresBtn').textContent = hires ? '320 Mode' : '640 Mode';
+  status.textContent = `HRG mode: ${hires ? '640' : '320'}×192`;
+  textScreen.focus();
+});
+
+// Clear HRG
+document.getElementById('clearHrg').addEventListener('click', () => {
+  if (!emu) return;
+  emu.hrg_clear();
+  textScreen.focus();
 });
 
 start();

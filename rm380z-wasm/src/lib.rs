@@ -15,10 +15,12 @@ const VDU_COLS: usize = 40;
 const VDU_ROWS: usize = 24;
 const VDU_SIZE: usize = VDU_COLS * VDU_ROWS;
 
-// HRG (High Resolution Graphics) — 320×192 monochrome bitmap
-const HRG_WIDTH: usize = 320;
+// HRG (High Resolution Graphics)
+// Both modes use 40 bytes per row, 192 rows = 7680 bytes.
+// 320×192: each bit = 2px wide on screen
+// 640×192: each bit = 1px wide on screen (double horizontal resolution)
+const HRG_BYTES_PER_ROW: usize = 40;
 const HRG_HEIGHT: usize = 192;
-const HRG_BYTES_PER_ROW: usize = HRG_WIDTH / 8; // 40 bytes
 const HRG_SIZE: usize = HRG_BYTES_PER_ROW * HRG_HEIGHT; // 7680 bytes
 
 #[wasm_bindgen]
@@ -29,11 +31,11 @@ pub struct Emulator {
     key_buffer: VecDeque<u8>,
     waiting_for_key: bool,
     running: bool,
-    /// HRG framebuffer — separate memory like the real HRG board.
-    /// 320×192 monochrome, 1 bit per pixel, 40 bytes per row.
-    /// Byte layout: MSB is leftmost pixel.
+    /// HRG framebuffer: 40 bytes/row × 192 rows. MSB = leftmost pixel.
     hrg: Box<[u8; HRG_SIZE]>,
     hrg_enabled: bool,
+    /// false = 320×192 (default), true = 640×192
+    hrg_hires: bool,
 }
 
 #[wasm_bindgen]
@@ -58,6 +60,7 @@ impl Emulator {
             running: true,
             hrg: vec![0u8; HRG_SIZE].into_boxed_slice().try_into().unwrap(),
             hrg_enabled: false,
+            hrg_hires: false,
         };
 
         // Print banner
@@ -155,25 +158,29 @@ impl Emulator {
     // --- HRG (High Resolution Graphics) ---
 
     /// Get pointer to HRG framebuffer for direct JS access.
-    /// 320×192 monochrome, 40 bytes per row, MSB = leftmost pixel.
+    /// 40 bytes/row × 192 rows, MSB = leftmost pixel.
     pub fn hrg_ptr(&self) -> *const u8 { self.hrg.as_ptr() }
-    pub fn hrg_width(&self) -> usize { HRG_WIDTH }
+    /// Pixel width: 320 (lores) or 640 (hires).
+    pub fn hrg_width(&self) -> usize { if self.hrg_hires { 640 } else { 320 } }
     pub fn hrg_height(&self) -> usize { HRG_HEIGHT }
     pub fn hrg_enabled(&self) -> bool { self.hrg_enabled }
+    pub fn hrg_is_hires(&self) -> bool { self.hrg_hires }
 
-    /// Set a pixel in the HRG framebuffer.
+    /// Set a pixel. In 320 mode, x is 0-319. In 640 mode, x is 0-639.
     pub fn hrg_set_pixel(&mut self, x: usize, y: usize) {
-        if x < HRG_WIDTH && y < HRG_HEIGHT {
+        let w = self.hrg_width();
+        if x < w && y < HRG_HEIGHT {
             let byte_idx = y * HRG_BYTES_PER_ROW + x / 8;
-            let bit = 7 - (x % 8); // MSB = leftmost
+            let bit = 7 - (x % 8);
             self.hrg[byte_idx] |= 1 << bit;
             self.hrg_enabled = true;
         }
     }
 
-    /// Clear a pixel in the HRG framebuffer.
+    /// Clear a pixel.
     pub fn hrg_clear_pixel(&mut self, x: usize, y: usize) {
-        if x < HRG_WIDTH && y < HRG_HEIGHT {
+        let w = self.hrg_width();
+        if x < w && y < HRG_HEIGHT {
             let byte_idx = y * HRG_BYTES_PER_ROW + x / 8;
             let bit = 7 - (x % 8);
             self.hrg[byte_idx] &= !(1 << bit);
@@ -188,6 +195,11 @@ impl Emulator {
     /// Toggle HRG display on/off.
     pub fn hrg_toggle(&mut self, enabled: bool) {
         self.hrg_enabled = enabled;
+    }
+
+    /// Switch between 320×192 (false) and 640×192 (true) modes.
+    pub fn hrg_set_hires(&mut self, hires: bool) {
+        self.hrg_hires = hires;
     }
 
     /// Write a byte directly to HRG memory at offset.
