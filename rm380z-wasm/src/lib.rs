@@ -28,8 +28,9 @@ pub struct Emulator {
     net: NetState,
     /// FCB tracking: maps FCB address → (conn_id_or_0, file_type)
     net_fcbs: HashMap<u16, (u8, &'static str)>,
-    /// Stored .COM files (name → data) for the built-in CCP
     files: HashMap<String, Vec<u8>>,
+    /// Open file handles: FCB addr -> (filename, position)
+    open_handles: HashMap<u16, (String, usize)>,
 }
 
 #[wasm_bindgen]
@@ -58,6 +59,7 @@ impl Emulator {
             net: NetState::new(),
             net_fcbs: HashMap::new(),
             files: HashMap::new(),
+            open_handles: HashMap::new(),
         };
         emu.vdu.write_str(&mut emu.cpu.mem, "RM 380Z CP/M 2.2\r\n\r\nA>");
         emu.running = false; // idle — JS CCP handles the prompt
@@ -354,12 +356,18 @@ impl Emulator {
                 self.cpu.l = self.cpu.a; self.cpu.h = 0;
             }
             12 => { self.cpu.a = 0x22; self.cpu.l = 0x22; self.cpu.h = 0; }
-            // File operations
+            13 => { bdos_core::set_return(&mut self.cpu, 0); } // reset disk
+            14 => { bdos_core::set_return(&mut self.cpu, 0); } // select disk
             15 => self.bdos_open(),
             16 => self.bdos_close(),
+            17 => self.bdos_search_first(),
+            18 => self.bdos_search_next(),
+            19 => self.bdos_delete(),
             20 => self.bdos_read_seq(),
             21 => self.bdos_write_seq(),
-            22 => self.bdos_open(), // make = open for net files
+            22 => self.bdos_make(),
+            25 => { self.cpu.a = 0; self.cpu.l = 0; self.cpu.h = 0; } // get disk
+            26 => { /* set DMA - we always use 0x0080 */ }
             _ => { bdos_core::set_return(&mut self.cpu, 0); }
         }
     }
@@ -368,19 +376,78 @@ impl Emulator {
         let fcb = self.cpu.de();
         let drv = self.cpu.read8(fcb);
         if self.is_net_drive(drv) {
-            if let Some((ftype, ext)) = bdos_core::parse_net_fcb(&self.cpu, fcb) {
+            if let Some((ftype, _ext)) = bdos_core::parse_net_fcb(&self.cpu, fcb) {
                 match ftype {
-                    "clone" => {
-                        let id = self.net.clone_conn();
-                        self.net_fcbs.insert(fcb, (id, "clone"));
-                        self.cpu.a = 0;
-                    }
+                    "clone" => { let id = self.net.clone_conn(); self.net_fcbs.insert(fcb, (id, "clone")); self.cpu.a = 0; }
                     "ctl" => { let id = bdos_core::parse_conn_id(&self.cpu, fcb).unwrap_or(0); self.net_fcbs.insert(fcb, (id, "ctl")); self.cpu.a = 0; }
                     "data" => { let id = bdos_core::parse_conn_id(&self.cpu, fcb).unwrap_or(0); self.net_fcbs.insert(fcb, (id, "data")); self.cpu.a = 0; }
                     "mem" | "devcpu" => { self.net_fcbs.insert(fcb, (0, ftype)); self.cpu.a = 0; }
-                    _ => { self.cpu.a = 0; } // claude, apikey, models, etc.
+                    _ => { self.cpu.a = 0; }
                 }
             } else { self.cpu.a = 0xFF; }
+        } else {
+            // Drive A: file store
+            let name = self.get_fcb_filename(fcb);
+            if self.files.contains_key(&name) {
+                self.open_handles.insert(fcb, (name, 0));
+                // Clear extent/record fields
+                for i in 12..16 { self.cpu.write8(fcb + i, 0); }
+                self.cpu.a = 0;
+            } else { self.cpu.a = 0xFF; }
+        }
+        self.cpu.l = self.cpu.a; self.cpu.h = 0;
+    }
+
+    fn bdos_make(&mut self) {
+        let fcb = self.cpu.de();
+        let drv = self.cpu.read8(fcb);
+        if self.is_net_drive(drv) {
+            self.bdos_open(); return;
+        }
+        let name = self.get_fcb_filename(fcb);
+        self.files.insert(name.clone(), Vec::new());
+        self.open_handles.insert(fcb, (name, 0));
+        for i in 12..16 { self.cpu.write8(fcb + i, 0); }
+        self.cpu.a = 0; self.cpu.l = 0; self.cpu.h = 0;
+    }
+
+    fn bdos_delete(&mut self) {
+        let fcb = self.cpu.de();
+        let name = self.get_fcb_filename(fcb);
+        if self.files.remove(&name).is_some() {
+            self.cpu.a = 0;
+        } else { self.cpu.a = 0xFF; }
+        self.cpu.l = self.cpu.a; self.cpu.h = 0;
+    }
+
+    fn bdos_search_first(&mut self) {
+        let fcb = self.cpu.de();
+        let name = self.get_fcb_filename(fcb);
+        // Collect matching files
+        let mut results: Vec<String> = if name.contains('?') || name == "????????.???" {
+            self.files.keys().cloned().collect()
+        } else {
+            self.files.keys().filter(|k| **k == name).cloned().collect()
+        };
+        results.sort();
+        self.net.claude_prompt.clear(); // reuse as search state storage
+        // Store search results as newline-separated in a temp
+        let joined = results.join("\n");
+        self.net.claude_prompt = joined.into_bytes();
+        self.net.claude_resp_pos = 0; // reuse as search index
+        self.bdos_search_next();
+    }
+
+    fn bdos_search_next(&mut self) {
+        let results: Vec<&str> = std::str::from_utf8(&self.net.claude_prompt)
+            .unwrap_or("").split('\n').filter(|s| !s.is_empty()).collect();
+        let idx = self.net.claude_resp_pos;
+        if idx < results.len() {
+            let filename = results[idx].to_string();
+            self.net.claude_resp_pos += 1;
+            // Write dir entry at DMA (0x0080)
+            rm380z_core::fcb::write_dir_entry(&mut self.cpu, 0x0080, &filename);
+            self.cpu.a = 0;
         } else { self.cpu.a = 0xFF; }
         self.cpu.l = self.cpu.a; self.cpu.h = 0;
     }
@@ -461,6 +528,21 @@ impl Emulator {
                 }
                 _ => { self.cpu.a = 1; }
             }
+        } else if let Some((name, pos)) = self.open_handles.get(&fcb).cloned() {
+            // Drive A: file read
+            if let Some(data) = self.files.get(&name) {
+                if pos < data.len() {
+                    let mut buf = [0x1Au8; 128];
+                    let n = (data.len() - pos).min(128);
+                    buf[..n].copy_from_slice(&data[pos..pos + n]);
+                    let dma = 0x0080u16;
+                    for i in 0..128 { self.cpu.write8(dma + i as u16, buf[i]); }
+                    self.open_handles.get_mut(&fcb).unwrap().1 = pos + 128;
+                    let cr = self.cpu.read8(fcb + 32);
+                    self.cpu.write8(fcb + 32, cr.wrapping_add(1));
+                    self.cpu.a = 0;
+                } else { self.cpu.a = 1; } // EOF
+            } else { self.cpu.a = 1; }
         } else { self.cpu.a = 1; }
         self.cpu.l = self.cpu.a; self.cpu.h = 0;
     }
@@ -483,6 +565,20 @@ impl Emulator {
                 _ => {}
             }
             self.cpu.a = 0;
+        } else if let Some((name, pos)) = self.open_handles.get(&fcb).cloned() {
+            // Drive A: file write
+            let dma = 0x0080u16;
+            let data: Vec<u8> = (0..128).map(|i| self.cpu.read8(dma + i)).collect();
+            let file = self.files.entry(name).or_insert_with(Vec::new);
+            // Extend file if needed
+            while file.len() < pos + 128 {
+                file.push(0x1A);
+            }
+            file[pos..pos + 128].copy_from_slice(&data);
+            self.open_handles.get_mut(&fcb).unwrap().1 = pos + 128;
+            let cr = self.cpu.read8(fcb + 32);
+            self.cpu.write8(fcb + 32, cr.wrapping_add(1));
+            self.cpu.a = 0;
         } else { self.cpu.a = 2; }
         self.cpu.l = self.cpu.a; self.cpu.h = 0;
     }
@@ -490,5 +586,12 @@ impl Emulator {
     fn get_fcb_ext(&self, fcb: u16) -> String {
         let ext: String = (0..3).map(|i| (self.cpu.read8(fcb + 9 + i) & 0x7F) as char).collect();
         ext.trim().to_string()
+    }
+
+    fn get_fcb_filename(&self, fcb: u16) -> String {
+        let name: String = (0..8).map(|i| (self.cpu.read8(fcb + 1 + i) & 0x7F) as char).collect();
+        let ext = self.get_fcb_ext(fcb);
+        let name = name.trim();
+        if ext.is_empty() { name.to_string() } else { format!("{}.{}", name, ext) }
     }
 }
