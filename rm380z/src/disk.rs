@@ -49,7 +49,7 @@ impl NetDrive {
         NetDrive {
             conns: HashMap::new(), next_id: 0, claude: None,
             api_key: String::new(),
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
         }
     }
 
@@ -144,7 +144,7 @@ impl NetDrive {
 
     /// Get available model names.
     pub fn get_models(&self) -> String {
-        format!("{}\r\nclaude-sonnet-4-20250514\r\nclaude-haiku-4-5-20251001\r\nclaude-opus-4-6\r\n", self.model)
+        format!("Current: {}\r\nclaude-haiku-4-5\r\nclaude-sonnet-4-5\r\nclaude-sonnet-4-6\r\nclaude-opus-4-6\r\n", self.model)
     }
 
     /// Set the model (from CLAUDE.MDL file write).
