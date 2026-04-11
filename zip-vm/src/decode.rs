@@ -131,59 +131,60 @@ impl Cpu {
                 0 => { // RLCA
                     let bit7 = self.a >> 7;
                     self.a = (self.a << 1) | bit7;
-                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | bit7;
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | (self.a & flags::F53) | bit7;
                     4
                 }
                 1 => { // RRCA
                     let bit0 = self.a & 1;
                     self.a = (self.a >> 1) | (bit0 << 7);
-                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | bit0;
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | (self.a & flags::F53) | bit0;
                     4
                 }
                 2 => { // RLA
                     let old_c = self.f & flags::C;
                     let bit7 = self.a >> 7;
                     self.a = (self.a << 1) | old_c;
-                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | bit7;
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | (self.a & flags::F53) | bit7;
                     4
                 }
                 3 => { // RRA
                     let old_c = self.f & flags::C;
                     let bit0 = self.a & 1;
                     self.a = (self.a >> 1) | (old_c << 7);
-                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | bit0;
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | (self.a & flags::F53) | bit0;
                     4
                 }
                 4 => { // DAA
-                    let mut a = self.a as u16;
+                    let a = self.a;
                     let n = self.f & flags::N != 0;
                     let hf = self.f & flags::H != 0;
                     let cf = self.f & flags::C != 0;
-                    let mut correction = 0u16;
-                    let mut new_c = false;
-                    if hf || (!n && (a & 0x0F) > 9) { correction |= 0x06; }
-                    if cf || (!n && a > 0x99) { correction |= 0x60; new_c = true; }
-                    if n { a = a.wrapping_sub(correction); } else { a = a.wrapping_add(correction); }
-                    self.a = a as u8;
-                    self.f = flags::szp(self.a) | if new_c { flags::C } else { 0 }
+                    // Compute full correction from original A (Z80 determines both
+                    // nibble corrections in one step, not sequentially)
+                    let mut correction: u8 = 0;
+                    let mut new_cf = cf;
+                    if hf || (a & 0x0F) > 9 { correction |= 0x06; }
+                    if cf || a > 0x99 { correction |= 0x60; new_cf = true; }
+                    self.a = if n { a.wrapping_sub(correction) } else { a.wrapping_add(correction) };
+                    self.f = flags::szp(self.a)
                         | (self.f & flags::N)
-                        | if (self.a ^ (a >> 8) as u8) & 0x10 != 0 { flags::H } else { 0 };
-                    // H flag for DAA: set if low nibble correction happened
-                    // This is approximate — DAA H flag is tricky. Revisit for ZEXDOC.
+                        | if new_cf { flags::C } else { 0 }
+                        | ((a ^ self.a) & flags::H);
                     4
                 }
                 5 => { // CPL
                     self.a = !self.a;
-                    self.f |= flags::H | flags::N;
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV | flags::C)) | (self.a & flags::F53) | flags::H | flags::N;
                     4
                 }
                 6 => { // SCF
-                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | flags::C;
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | (self.a & flags::F53) | flags::C;
                     4
                 }
                 7 => { // CCF
                     let old_c = self.f & flags::C;
-                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | if old_c != 0 { flags::H } else { flags::C };
+                    self.f = (self.f & (flags::S | flags::Z | flags::PV)) | (self.a & flags::F53)
+                        | if old_c != 0 { flags::H } else { flags::C };
                     4
                 }
                 _ => unreachable!()
@@ -325,9 +326,13 @@ impl Cpu {
             }
             1 => { // BIT y, r
                 let bit = val & (1 << y);
+                // Undocumented: for registers, bits 3,5 from the register value;
+                // for (HL), from high byte of address. We approximate with val for registers.
+                let f53_src = if is_hl { (self.hl() >> 8) as u8 } else { val };
                 self.f = (self.f & flags::C) | flags::H
                     | if bit == 0 { flags::Z | flags::PV } else { 0 }
-                    | (bit & flags::S);
+                    | (bit & flags::S)
+                    | (f53_src & flags::F53);
                 if is_hl { 12 } else { 8 }
             }
             2 => { // RES y, r
@@ -421,13 +426,13 @@ impl Cpu {
                 self.f = flags::szp(self.a) | (self.f & flags::C);
                 18
             }
-            _ if (op & 0xC7) == 0x43 => { // LD (nn),rp  — ED 43/53/63/73
+            _ if (op & 0xCF) == 0x43 => { // LD (nn),rp  — ED 43/53/63/73
                 let addr = self.fetch16();
                 let v = self.rp(p);
                 self.write16(addr, v);
                 20
             }
-            _ if (op & 0xC7) == 0x4B => { // LD rp,(nn)  — ED 4B/5B/6B/7B
+            _ if (op & 0xCF) == 0x4B => { // LD rp,(nn)  — ED 4B/5B/6B/7B
                 let addr = self.fetch16();
                 let v = self.read16(addr);
                 self.set_rp(p, v);
@@ -471,7 +476,12 @@ impl Cpu {
         self.set_hl(self.hl().wrapping_add(1));
         self.set_de(self.de().wrapping_add(1));
         self.set_bc(self.bc().wrapping_sub(1));
-        self.f = (self.f & (flags::S | flags::Z | flags::C)) | if self.bc() != 0 { flags::PV } else { 0 };
+        // Undocumented: n = A + val; F5 = bit 1 of n, F3 = bit 3 of n
+        let n = self.a.wrapping_add(val);
+        self.f = (self.f & (flags::S | flags::Z | flags::C))
+            | if self.bc() != 0 { flags::PV } else { 0 }
+            | (n & flags::F3)
+            | if n & 0x02 != 0 { flags::F5 } else { 0 };
     }
     fn ldd(&mut self) {
         let val = self.read8(self.hl());
@@ -479,23 +489,34 @@ impl Cpu {
         self.set_hl(self.hl().wrapping_sub(1));
         self.set_de(self.de().wrapping_sub(1));
         self.set_bc(self.bc().wrapping_sub(1));
-        self.f = (self.f & (flags::S | flags::Z | flags::C)) | if self.bc() != 0 { flags::PV } else { 0 };
+        let n = self.a.wrapping_add(val);
+        self.f = (self.f & (flags::S | flags::Z | flags::C))
+            | if self.bc() != 0 { flags::PV } else { 0 }
+            | (n & flags::F3)
+            | if n & 0x02 != 0 { flags::F5 } else { 0 };
     }
     fn cpi(&mut self) {
         let val = self.read8(self.hl());
-        let (_, f) = flags::sub8(self.a, val, false);
+        let (result, f) = flags::sub8(self.a, val, false);
         self.set_hl(self.hl().wrapping_add(1));
         self.set_bc(self.bc().wrapping_sub(1));
-        self.f = (f & !(flags::C | flags::PV)) | (self.f & flags::C)
-            | if self.bc() != 0 { flags::PV } else { 0 };
+        // Undocumented: n = A - val - HF; F5 = bit 1 of n, F3 = bit 3 of n
+        let n = result.wrapping_sub(if f & flags::H != 0 { 1 } else { 0 });
+        self.f = (f & !(flags::C | flags::PV | flags::F53)) | (self.f & flags::C)
+            | if self.bc() != 0 { flags::PV } else { 0 }
+            | (n & flags::F3)
+            | if n & 0x02 != 0 { flags::F5 } else { 0 };
     }
     fn cpd(&mut self) {
         let val = self.read8(self.hl());
-        let (_, f) = flags::sub8(self.a, val, false);
+        let (result, f) = flags::sub8(self.a, val, false);
         self.set_hl(self.hl().wrapping_sub(1));
         self.set_bc(self.bc().wrapping_sub(1));
-        self.f = (f & !(flags::C | flags::PV)) | (self.f & flags::C)
-            | if self.bc() != 0 { flags::PV } else { 0 };
+        let n = result.wrapping_sub(if f & flags::H != 0 { 1 } else { 0 });
+        self.f = (f & !(flags::C | flags::PV | flags::F53)) | (self.f & flags::C)
+            | if self.bc() != 0 { flags::PV } else { 0 }
+            | (n & flags::F3)
+            | if n & 0x02 != 0 { flags::F5 } else { 0 };
     }
 
     // ---- DD/FD prefix: IX/IY indexed ----
@@ -611,6 +632,42 @@ impl Cpu {
                 19
             }
 
+            // --- Undocumented IXH/IXL/IYH/IYL instructions ---
+
+            // INC/DEC IXH/IXL/IYH/IYL
+            _ if x == 0 && z == 4 && (y == 4 || y == 5) => {
+                let v = self.idx_reg8(is_ix, y);
+                let (result, f) = flags::inc8(v);
+                self.set_idx_reg8(is_ix, y, result);
+                self.f = f | (self.f & flags::C);
+                8
+            }
+            _ if x == 0 && z == 5 && (y == 4 || y == 5) => {
+                let v = self.idx_reg8(is_ix, y);
+                let (result, f) = flags::dec8(v);
+                self.set_idx_reg8(is_ix, y, result);
+                self.f = f | (self.f & flags::C);
+                8
+            }
+            // LD IXH/IXL/IYH/IYL, n
+            _ if x == 0 && z == 6 && (y == 4 || y == 5) => {
+                let n = self.fetch8();
+                self.set_idx_reg8(is_ix, y, n);
+                11
+            }
+            // LD r, IXH/IXL (and LD IXH/IXL, r)
+            _ if x == 1 && y != 6 && z != 6 && (y == 4 || y == 5 || z == 4 || z == 5) => {
+                let v = self.idx_reg8(is_ix, z);
+                self.set_idx_reg8(is_ix, y, v);
+                8
+            }
+            // ALU A, IXH/IXL/IYH/IYL
+            _ if x == 2 && (z == 4 || z == 5) => {
+                let v = self.idx_reg8(is_ix, z);
+                self.alu_op(y, v);
+                8
+            }
+
             // Everything else: execute as unprefixed (prefix is consumed)
             _ => self.execute(op)
         }
@@ -652,7 +709,8 @@ impl Cpu {
                 let bit = val & (1 << y);
                 self.f = (self.f & flags::C) | flags::H
                     | if bit == 0 { flags::Z | flags::PV } else { 0 }
-                    | (bit & flags::S);
+                    | (bit & flags::S)
+                    | ((addr >> 8) as u8 & flags::F53);
                 20
             }
             2 => { // RES y, (IX/IY+d)

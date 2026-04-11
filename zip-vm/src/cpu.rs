@@ -139,6 +139,23 @@ impl Cpu {
     pub fn get_idx(&self, is_ix: bool) -> u16 { if is_ix { self.ix } else { self.iy } }
     pub fn set_idx(&mut self, is_ix: bool, v: u16) { if is_ix { self.ix = v; } else { self.iy = v; } }
 
+    /// Read IXH/IXL or IYH/IYL (undocumented register access).
+    /// Register code 4=high byte, 5=low byte; all others fall through to normal reg8.
+    pub fn idx_reg8(&self, is_ix: bool, r: u8) -> u8 {
+        match r & 7 {
+            4 => (self.get_idx(is_ix) >> 8) as u8,
+            5 => self.get_idx(is_ix) as u8,
+            _ => self.reg8(r),
+        }
+    }
+    pub fn set_idx_reg8(&mut self, is_ix: bool, r: u8, v: u8) {
+        match r & 7 {
+            4 => { let idx = self.get_idx(is_ix); self.set_idx(is_ix, (idx & 0xFF) | ((v as u16) << 8)); }
+            5 => { let idx = self.get_idx(is_ix); self.set_idx(is_ix, (idx & 0xFF00) | v as u16); }
+            _ => self.set_reg8(r, v),
+        }
+    }
+
     /// Read (IX/IY + d) where d is a signed displacement already fetched.
     pub fn read_idx(&self, is_ix: bool, d: i8) -> u8 {
         let addr = self.get_idx(is_ix).wrapping_add(d as u16);
@@ -178,7 +195,10 @@ impl Cpu {
             4 => { self.a = a & val; self.f = flags::szp(self.a) | flags::H; }
             5 => { self.a = a ^ val; self.f = flags::szp(self.a); }
             6 => { self.a = a | val; self.f = flags::szp(self.a); }
-            7 => { let (_, f) = flags::sub8(a, val, false); self.f = f; } // CP: flags only
+            7 => { // CP: flags from subtraction, but bits 3,5 from operand
+                let (_, f) = flags::sub8(a, val, false);
+                self.f = (f & !flags::F53) | (val & flags::F53);
+            }
             _ => unreachable!()
         }
     }
