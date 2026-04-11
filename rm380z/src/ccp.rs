@@ -1,4 +1,5 @@
-use crate::cpm::{Cpm, TPA_BASE, BDOS_ADDR};
+use crate::cpm::Cpm;
+use rm380z_core::page_zero::{TPA_BASE, BDOS_ADDR};
 use crate::fcb;
 
 /// Run the CCP (Console Command Processor).

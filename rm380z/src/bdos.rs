@@ -1,5 +1,6 @@
 use crate::cpm::Cpm;
 use crate::fcb;
+use rm380z_core::bdos as bdos_core;
 
 /// Dispatch a BDOS call based on the function number in register C.
 pub fn dispatch(cpm: &mut Cpm) {
@@ -210,53 +211,11 @@ fn get_dpb(cpm: &mut Cpm) {
 
 // --- File I/O ---
 
-/// Parse a network filename from an FCB: CLONE.HTTP, 0.CTL, 0.DATA
-/// Returns (file_type, conn_id, ext_string)
+/// Parse a network filename, delegating to core. Returns (ftype, ext).
 fn parse_net_fcb(cpu: &z80::cpu::Cpu, fcb: u16) -> Option<(&'static str, Option<u8>, String)> {
-    let name: String = (0..8).map(|i| (cpu.read8(fcb + 1 + i) & 0x7F) as char).collect();
-    let ext: String = (0..3).map(|i| (cpu.read8(fcb + 9 + i) & 0x7F) as char).collect();
-    let name = name.trim();
-    let ext = ext.trim();
-    let ext_owned = ext.to_string();
-
-    if name == "CLONE" && (ext == "WWW" || ext == "WSK") {
-        return Some(("clone", None, ext_owned.clone()));
-    }
-    if name == "CLAUDE" && ext == "AI" {
-        return Some(("claude", None, ext_owned.clone()));
-    }
-    if name == "CLAUDE" && ext == "KEY" {
-        return Some(("apikey", None, ext_owned.clone()));
-    }
-    if name == "CLAUDE" && ext == "CLI" {
-        return Some(("cli", None, ext_owned.clone()));
-    }
-    // Memory banks: MEM.0 through MEM.3, MEM.VDU
-    if name == "MEM" {
-        return match ext {
-            "0" | "1" | "2" | "3" | "VDU" => Some(("mem", None, ext_owned.clone())),
-            _ => None,
-        };
-    }
-    // Device files: DEV.CPU
-    if name == "DEV" && ext == "CPU" {
-        return Some(("devcpu", None, ext_owned.clone()));
-    }
-    if name == "CLAUDE" && ext == "RUN" {
-        return Some(("run", None, ext_owned.clone()));
-    }
-    if name == "CLAUDE" && ext == "MNS" {
-        return Some(("models", None, ext_owned.clone()));
-    }
-    if name == "CLAUDE" && ext == "MDL" {
-        return Some(("setmodel", None, ext_owned.clone()));
-    }
-    let id: u8 = name.parse().ok()?;
-    match ext {
-        "CTL" => Some(("ctl", Some(id), ext_owned.clone())),
-        "DATA" => Some(("data", Some(id), ext_owned.clone())),
-        _ => None,
-    }
+    let (ftype, ext) = bdos_core::parse_net_fcb(cpu, fcb)?;
+    let conn_id = bdos_core::parse_conn_id(cpu, fcb);
+    Some((ftype, conn_id, ext))
 }
 
 fn open_file(cpm: &mut Cpm) {
@@ -409,32 +368,15 @@ fn read_seq(cpm: &mut Cpm) {
                     cpm.cpu.a = 0;
                 }
                 "mem" => {
-                    // Read 128 bytes from memory bank
-                    let (base, size) = match ext_str.as_str() {
-                        "0" => (0x0000usize, 0x4000usize),
-                        "1" => (0x4000, 0x4000),
-                        "2" => (0x8000, 0x4000),
-                        "3" => (0xC000, 0x4000),
-                        "VDU" => (0xFC00, 0x0400),
-                        _ => (0, 0),
-                    };
-                    let cr = cpm.cpu.read8(fcb_addr + 32) as usize;
-                    let offset = base + cr * 128;
-                    if offset + 128 <= base + size {
-                        let dma = cpm.disk.dma_addr as usize;
-                        cpm.cpu.mem.copy_within(offset..offset + 128, dma);
+                    let dma = cpm.disk.dma_addr;
+                    if bdos_core::read_mem_bank(&mut cpm.cpu, &ext_str, fcb_addr, dma) {
                         cpm.cpu.a = 0;
                     } else {
-                        cpm.cpu.a = 1; // EOF
+                        cpm.cpu.a = 1;
                     }
                 }
                 "devcpu" => {
-                    // Register dump as text
-                    let text = format!(
-                        "A={:02X} F={:02X} BC={:04X} DE={:04X} HL={:04X}\r\nSP={:04X} PC={:04X} IX={:04X} IY={:04X}\r\n",
-                        cpm.cpu.a, cpm.cpu.f, cpm.cpu.bc(), cpm.cpu.de(), cpm.cpu.hl(),
-                        cpm.cpu.sp, cpm.cpu.pc, cpm.cpu.ix, cpm.cpu.iy
-                    );
+                    let text = bdos_core::cpu_dump(&cpm.cpu);
                     let dma = cpm.disk.dma_addr as usize;
                     let mut buf = [0x1Au8; 128];
                     let n = text.len().min(127);
@@ -475,20 +417,7 @@ fn write_seq(cpm: &mut Cpm) {
                 "apikey" => { net.set_api_key(&data); }
                 "setmodel" => { net.set_model(&data); }
                 "mem" => {
-                    let (base, size) = match ext_str.as_str() {
-                        "0" => (0x0000usize, 0x4000usize),
-                        "1" => (0x4000, 0x4000),
-                        "2" => (0x8000, 0x4000),
-                        "3" => (0xC000, 0x4000),
-                        "VDU" => (0xFC00, 0x0400),
-                        _ => (0, 0),
-                    };
-                    let cr = cpm.cpu.read8(fcb_addr + 32) as usize;
-                    let offset = base + cr * 128;
-                    if offset + 128 <= base + size {
-                        let dma = cpm.disk.dma_addr as usize;
-                        cpm.cpu.mem.copy_within(dma..dma + 128, offset);
-                    }
+                    bdos_core::write_mem_bank(&mut cpm.cpu, &ext_str, fcb_addr, cpm.disk.dma_addr);
                 }
                 _ => {}
             }

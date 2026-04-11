@@ -1,17 +1,10 @@
 use z80::cpu::Cpu;
+use rm380z_core::page_zero::{self, BDOS_ENTRY, BDOS_ADDR, CCP_ENTRY, BIOS_HANDLERS, TPA_BASE, DMA_DEFAULT};
 use crate::bdos;
 use crate::ccp;
 use crate::console::Console;
 use crate::disk::DiskSystem;
 use crate::vdu::Vdu;
-
-// CP/M 2.2 memory map for a 64K system
-pub const BDOS_ENTRY: u16 = 0x0005;
-pub const BDOS_ADDR: u16 = 0xE400;  // stored at 0006h, defines TPA top
-pub const CCP_ENTRY: u16 = 0xD000;
-pub const BIOS_BASE: u16 = 0xFA00;
-pub const TPA_BASE: u16 = 0x0100;
-pub const DMA_DEFAULT: u16 = 0x0080;
 
 pub struct Cpm {
     pub cpu: Cpu,
@@ -24,8 +17,8 @@ pub struct Cpm {
 impl Cpm {
     pub fn new() -> Self {
         let mut cpu = Cpu::new();
-        setup_page_zero(&mut cpu);
-        setup_bios_stubs(&mut cpu);
+        page_zero::setup_page_zero(&mut cpu);
+        page_zero::setup_bios(&mut cpu);
 
         let mut vdu = Vdu::new();
         vdu.init(&mut cpu.mem);
@@ -203,33 +196,11 @@ impl Cpm {
 
     /// Warm boot: return to CCP.
     pub fn warm_boot(&mut self) {
-        setup_page_zero(&mut self.cpu);
+        page_zero::setup_page_zero(&mut self.cpu);
         self.cpu.pc = CCP_ENTRY;
         self.cpu.sp = BDOS_ADDR;
         self.disk.dma_addr = DMA_DEFAULT;
     }
 }
 
-fn setup_page_zero(cpu: &mut Cpu) {
-    cpu.mem[0x0000] = 0xC3;
-    cpu.write16(0x0001, BIOS_BASE + 3);
-    cpu.mem[0x0003] = 0x00;
-    cpu.mem[0x0004] = 0x00;
-    cpu.mem[0x0005] = 0xC3;
-    cpu.write16(0x0006, BDOS_ADDR);
-}
-
-/// Base address of BIOS handler area (after the 17x3 jump table).
-pub const BIOS_HANDLERS: u16 = BIOS_BASE + 17 * 3;
-
-fn setup_bios_stubs(cpu: &mut Cpu) {
-    for i in 0..17u16 {
-        let entry = BIOS_BASE + i * 3;
-        let handler = BIOS_HANDLERS + i;
-        cpu.mem[entry as usize] = 0xC3;
-        cpu.write16(entry + 1, handler);
-    }
-    for i in 0..17u16 {
-        cpu.mem[(BIOS_HANDLERS + i) as usize] = 0xC9;
-    }
-}
+// Page zero, BIOS stubs, and constants now from rm380z_core::page_zero
