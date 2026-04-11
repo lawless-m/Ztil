@@ -59,8 +59,8 @@ impl Emulator {
             net_fcbs: HashMap::new(),
             files: HashMap::new(),
         };
-        emu.vdu.write_str(&mut emu.cpu.mem, "RM 380Z CP/M 2.2\r\n\r\nLoad a .COM file to run.\r\n");
-        emu.running = false; // idle until a program is loaded
+        emu.vdu.write_str(&mut emu.cpu.mem, "RM 380Z CP/M 2.2\r\n\r\nA>");
+        emu.running = false; // idle — JS CCP handles the prompt
         emu
     }
 
