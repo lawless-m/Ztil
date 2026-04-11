@@ -27,6 +27,11 @@ pub fn dispatch(cpm: &mut Cpm) {
         24 => login_vector(cpm),
         25 => get_disk(cpm),
         26 => set_dma(cpm),
+        27 => get_alloc_vec(cpm),
+        28 => write_protect_disk(cpm),
+        29 => get_ro_vec(cpm),
+        30 => set_file_attrs(cpm),
+        31 => get_dpb(cpm),
         32 => get_set_user(cpm),
         33 => read_rand(cpm),
         34 => write_rand(cpm),
@@ -133,6 +138,50 @@ fn get_set_user(cpm: &mut Cpm) {
         cpm.cpu.a = 0; // always user 0
     }
     // else: set user (ignored, always user 0)
+}
+
+// --- Disk info stubs ---
+
+fn get_alloc_vec(cpm: &mut Cpm) {
+    // Return pointer to allocation vector — we fake one in high memory
+    // Programs use this to compute free space. We return a zeroed area.
+    cpm.cpu.h = 0xF0;
+    cpm.cpu.l = 0x00;
+}
+
+fn write_protect_disk(cpm: &mut Cpm) {
+    // Software write-protect current disk — ignore
+    cpm.cpu.a = 0;
+}
+
+fn get_ro_vec(cpm: &mut Cpm) {
+    // Return read-only vector (bitmap of R/O drives) — none are R/O
+    cpm.cpu.h = 0;
+    cpm.cpu.l = 0;
+}
+
+fn set_file_attrs(cpm: &mut Cpm) {
+    // Set file attributes (R/O, SYS, etc.) — ignore
+    cpm.cpu.a = 0;
+}
+
+fn get_dpb(cpm: &mut Cpm) {
+    // Return address of Disk Parameter Block.
+    // We write a fake DPB into high memory at F010h.
+    let dpb = 0xF010u16;
+    // SPT=40 (10 x 512-byte = 40 x 128-byte sectors)
+    cpm.cpu.write16(dpb, 40);
+    cpm.cpu.write8(dpb + 2, 3);     // BSH (1K blocks)
+    cpm.cpu.write8(dpb + 3, 7);     // BLM
+    cpm.cpu.write8(dpb + 4, 0);     // EXM
+    cpm.cpu.write16(dpb + 5, 189);  // DSM (190 blocks - 1)
+    cpm.cpu.write16(dpb + 7, 63);   // DRM (64 dir entries - 1)
+    cpm.cpu.write8(dpb + 9, 0xC0);  // AL0
+    cpm.cpu.write8(dpb + 10, 0x00); // AL1
+    cpm.cpu.write16(dpb + 11, 16);  // CKS
+    cpm.cpu.write16(dpb + 13, 2);   // OFF (reserved tracks)
+    cpm.cpu.h = (dpb >> 8) as u8;
+    cpm.cpu.l = dpb as u8;
 }
 
 // --- File I/O ---
