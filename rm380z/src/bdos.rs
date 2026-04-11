@@ -220,6 +220,12 @@ fn parse_net_fcb(cpu: &z80::cpu::Cpu, fcb: u16) -> Option<(&'static str, Option<
     if name == "CLONE" && (ext == "WWW" || ext == "WSK") {
         return Some(("clone", None));
     }
+    if name == "CLAUDE" && ext == "AI" {
+        return Some(("claude", None));
+    }
+    if name == "CLAUDE" && ext == "KEY" {
+        return Some(("apikey", None));
+    }
     let id: u8 = name.parse().ok()?;
     match ext {
         "CTL" => Some(("ctl", Some(id))),
@@ -239,6 +245,8 @@ fn open_file(cpm: &mut Cpm) {
                 match ftype {
                     "clone" => { net.clone_conn(); cpm.cpu.a = 0; }
                     "ctl" | "data" => { cpm.cpu.a = if id.is_some() { 0 } else { 0xFF }; }
+                    "claude" => { net.open_claude(); cpm.cpu.a = 0; }
+                    "apikey" => { cpm.cpu.a = 0; } // write-only, always succeeds
                     _ => { cpm.cpu.a = 0xFF; }
                 }
                 cpm.cpu.l = cpm.cpu.a; cpm.cpu.h = 0;
@@ -325,9 +333,18 @@ fn read_seq(cpm: &mut Cpm) {
                             cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
                             cpm.cpu.a = 0;
                         } else {
-                            cpm.cpu.a = 1; // EOF
+                            cpm.cpu.a = 1;
                         }
                     } else { cpm.cpu.a = 1; }
+                }
+                "claude" => {
+                    if let Some(buf) = net.read_claude() {
+                        let dma = cpm.disk.dma_addr as usize;
+                        cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
+                        cpm.cpu.a = 0;
+                    } else {
+                        cpm.cpu.a = 1;
+                    }
                 }
                 _ => { cpm.cpu.a = 1; }
             }
@@ -358,6 +375,8 @@ fn write_seq(cpm: &mut Cpm) {
             match ftype {
                 "ctl" => { if let Some(id) = id { net.write_ctl(id, &data); } }
                 "data" => { if let Some(id) = id { net.write_data(id, &data); } }
+                "claude" => { net.write_claude(&data); }
+                "apikey" => { net.set_api_key(&data); }
                 _ => {}
             }
             cpm.cpu.a = 0; cpm.cpu.l = 0; cpm.cpu.h = 0;

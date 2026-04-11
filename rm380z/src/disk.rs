@@ -13,10 +13,12 @@ pub enum Drive {
     Network(NetDrive),
 }
 
-/// Plan 9-style network drive. Connections created via CLONE.HTTP files.
+/// Plan 9-style network drive. Connections created via CLONE.WWW files.
 pub struct NetDrive {
     conns: HashMap<u8, NetConn>,
     pub next_id: u8,
+    pub claude: Option<ClaudeConn>,
+    pub api_key: String,
 }
 
 struct NetConn {
@@ -27,6 +29,14 @@ struct NetConn {
     state: NetState,
 }
 
+/// Claude AI conversation state.
+pub struct ClaudeConn {
+    prompt: Vec<u8>,
+    resp_data: Vec<u8>,
+    resp_pos: usize,
+    responded: bool,
+}
+
 #[derive(PartialEq)]
 enum NetState { New, CtlWritten, ResponseReady }
 
@@ -35,7 +45,95 @@ pub enum NetFileType { Clone, Ctl, Data }
 
 impl NetDrive {
     pub fn new() -> Self {
-        NetDrive { conns: HashMap::new(), next_id: 0 }
+        NetDrive { conns: HashMap::new(), next_id: 0, claude: None, api_key: String::new() }
+    }
+
+    /// Open CLAUDE.AI — creates a new conversation.
+    pub fn open_claude(&mut self) {
+        self.claude = Some(ClaudeConn {
+            prompt: Vec::new(), resp_data: Vec::new(), resp_pos: 0, responded: false,
+        });
+    }
+
+    /// Write prompt text to CLAUDE.AI.
+    pub fn write_claude(&mut self, data: &[u8]) {
+        if let Some(c) = &mut self.claude {
+            for &b in data {
+                if b == 0x1A { break; }
+                c.prompt.push(b);
+            }
+        }
+    }
+
+    /// Read response from CLAUDE.AI. Executes the API call on first read.
+    pub fn read_claude(&mut self) -> Option<[u8; 128]> {
+        let claude = self.claude.as_mut()?;
+        if !claude.responded {
+            // Execute the API call
+            let prompt = String::from_utf8_lossy(&claude.prompt).trim().to_string();
+            if prompt.is_empty() { return None; }
+
+            let api_key = &self.api_key;
+            if api_key.is_empty() {
+                claude.resp_data = b"ERROR: No API key. Write key to N:CLAUDE.KEY\r\n".to_vec();
+            } else {
+                let body = format!(
+                    r#"{{"model":"claude-sonnet-4-20250514","max_tokens":1024,"messages":[{{"role":"user","content":"{}"}}]}}"#,
+                    prompt.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                let result = ureq::post("https://api.anthropic.com/v1/messages")
+                    .set("x-api-key", api_key)
+                    .set("anthropic-version", "2023-06-01")
+                    .set("content-type", "application/json")
+                    .send_string(&body);
+
+                match result {
+                    Ok(resp) => {
+                        let text = resp.into_string().unwrap_or_default();
+                        // Extract the text content from the JSON response
+                        if let Some(start) = text.find("\"text\":\"") {
+                            let start = start + 8;
+                            if let Some(end) = text[start..].find("\"") {
+                                let content = &text[start..start + end];
+                                let content = content.replace("\\n", "\r\n").replace("\\\"", "\"");
+                                claude.resp_data = content.into_bytes();
+                            } else {
+                                claude.resp_data = text.into_bytes();
+                            }
+                        } else {
+                            claude.resp_data = text.into_bytes();
+                        }
+                    }
+                    Err(e) => {
+                        claude.resp_data = format!("ERROR: {}\r\n", e).into_bytes();
+                    }
+                }
+            }
+            // Add CP/M line ending
+            claude.resp_data.extend_from_slice(b"\r\n");
+            claude.resp_pos = 0;
+            claude.responded = true;
+        }
+
+        if claude.resp_pos >= claude.resp_data.len() { return None; }
+        let mut buf = [0x1Au8; 128];
+        let remaining = claude.resp_data.len() - claude.resp_pos;
+        let n = remaining.min(128);
+        buf[..n].copy_from_slice(&claude.resp_data[claude.resp_pos..claude.resp_pos + n]);
+        claude.resp_pos += 128;
+        Some(buf)
+    }
+
+    /// Close CLAUDE.AI conversation.
+    pub fn close_claude(&mut self) {
+        self.claude = None;
+    }
+
+    /// Set API key (from CLAUDE.KEY file write).
+    pub fn set_api_key(&mut self, data: &[u8]) {
+        let key: String = data.iter().take_while(|&&b| b != 0x1A && b != b'\r' && b != b'\n')
+            .map(|&b| b as char).collect();
+        self.api_key = key.trim().to_string();
     }
 
     pub fn clone_conn(&mut self) -> u8 {
