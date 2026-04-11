@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RM 380Z</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #0f0;
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    margin: 0;
+  }
+  h1 { color: #0a0; font-size: 18px; margin-bottom: 10px; }
+  #monitors {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  .monitor {
+    border: 2px solid #0a0;
+    border-radius: 12px;
+    padding: 12px;
+    background: #0a0a0a;
+    box-shadow: 0 0 30px rgba(0, 255, 0, 0.15);
+  }
+  .monitor-label {
+    color: #0a0;
+    font-size: 11px;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  #text-screen {
+    background: #000;
+    color: #0f0;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    line-height: 1.2;
+    white-space: pre;
+    width: 40ch;
+    min-height: 28.8em;
+    outline: none;
+    padding: 4px;
+  }
+  #text-screen .cursor {
+    background: #0f0;
+    color: #000;
+  }
+  #hrg-canvas {
+    display: block;
+    background: #000;
+    image-rendering: pixelated;
+  }
+  #controls {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  button {
+    background: #0a0;
+    color: #000;
+    border: none;
+    padding: 6px 12px;
+    font-family: monospace;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  button:hover { background: #0f0; }
+  button.active { background: #ff0; }
+  #status { color: #0a0; font-size: 11px; width: 100%; text-align: center; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<h1>Research Machines 380Z</h1>
+<div id="monitors">
+  <div class="monitor">
+    <div class="monitor-label">VDU — 40×24 TEXT</div>
+    <div id="text-screen" tabindex="0"></div>
+  </div>
+  <div class="monitor">
+    <div class="monitor-label">HRG — <span id="hrg-mode">320×192</span> GRAPHICS</div>
+    <canvas id="hrg-canvas" width="640" height="384"></canvas>
+  </div>
+</div>
+<div id="controls">
+  <button id="loadBtn">Load .COM</button>
+  <input type="file" id="fileInput" accept=".com,.COM">
+  <button class="com-btn" data-com="com/HELLO.COM">Hello</button>
+  <button class="com-btn" data-com="com/SARGON.COM">Sargon Chess</button>
+  <button id="hrgDemo">HRG Demo</button>
+  <button id="hiresBtn">640 Mode</button>
+  <button id="clearHrg">Clear HRG</button>
+  <button id="netBtn">Mount N: net</button>
+  <div id="status">Click text screen to type. Load a .COM or click a program button.</div>
+</div>
+
+<script type="module">
+import init, { Emulator } from './pkg/rm380z_wasm.js';
+
+let emu = null;
+let wasmMemory = null;
+
+const textScreen = document.getElementById('text-screen');
+const canvas = document.getElementById('hrg-canvas');
+const ctx = canvas.getContext('2d');
+const hrgModeLabel = document.getElementById('hrg-mode');
+const status = document.getElementById('status');
+const fileInput = document.getElementById('fileInput');
+
+// Claude via WebSocket to host server
+let claudeWs = null;
+let claudeResolve = null;
+
+function connectClaude() {
+  const wsUrl = window.RM380Z_WS;
+  const nonce = window.RM380Z_NONCE;
+  if (!wsUrl || !nonce) return;
+
+  claudeWs = new WebSocket(wsUrl);
+  claudeWs.onopen = () => {
+    claudeWs.send(nonce); // authenticate
+    status.textContent = 'Claude connected';
+  };
+  claudeWs.onmessage = (e) => {
+    if (claudeResolve) {
+      claudeResolve(e.data);
+      claudeResolve = null;
+    }
+  };
+  claudeWs.onclose = () => { claudeWs = null; };
+  claudeWs.onerror = () => { claudeWs = null; };
+}
+
+function askClaude(prompt) {
+  return new Promise((resolve) => {
+    if (!claudeWs || claudeWs.readyState !== WebSocket.OPEN) {
+      resolve('ERROR: Claude not connected\r\n');
+      return;
+    }
+    claudeResolve = resolve;
+    claudeWs.send(prompt);
+  });
+}
+
+async function start() {
+  const wasm = await init();
+  wasmMemory = wasm.memory;
+  emu = new Emulator();
+  emu.net_mount(13); // auto-mount N: for network
+  connectClaude();
+  textScreen.focus();
+  runLoop();
+}
+
+function renderVDU() {
+  if (!emu || !wasmMemory) return;
+  const ptr = emu.vdu_ptr();
+  const mem = new Uint8Array(wasmMemory.buffer, ptr, 960);
+  const curRow = emu.cursor_row();
+  const curCol = emu.cursor_col();
+
+  let html = '';
+  for (let row = 0; row < 24; row++) {
+    for (let col = 0; col < 40; col++) {
+      let ch = mem[row * 40 + col];
+      if (ch < 32 || ch > 126) ch = 32;
+      const c = String.fromCharCode(ch);
+      if (row === curRow && col === curCol) {
+        html += '<span class="cursor">' + esc(c) + '</span>';
+      } else {
+        html += esc(c);
+      }
+    }
+    if (row < 23) html += '\n';
+  }
+  textScreen.innerHTML = html;
+}
+
+function renderHRG() {
+  if (!emu || !wasmMemory) return;
+  const w = emu.hrg_width();
+  const h = emu.hrg_height();
+  const hires = emu.hrg_is_hires();
+
+  // Update canvas size if mode changed
+  const cw = hires ? 640 : 640; // always 640px wide
+  const ch = 384; // always 2x height
+  if (canvas.width !== cw) canvas.width = cw;
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!emu.hrg_enabled()) return;
+
+  const ptr = emu.hrg_ptr();
+  const mem = new Uint8Array(wasmMemory.buffer, ptr, 40 * 192);
+  const imgData = ctx.createImageData(canvas.width, canvas.height);
+  const px = imgData.data;
+
+  const scaleX = hires ? 1 : 2;
+  const scaleY = 2;
+
+  for (let y = 0; y < 192; y++) {
+    for (let byteX = 0; byteX < 40; byteX++) {
+      const byte = mem[y * 40 + byteX];
+      if (byte === 0) continue; // skip empty bytes
+      for (let bit = 0; bit < 8; bit++) {
+        if (!((byte >> (7 - bit)) & 1)) continue;
+        const pixX = byteX * 8 + bit;
+        for (let sy = 0; sy < scaleY; sy++) {
+          for (let sx = 0; sx < scaleX; sx++) {
+            const idx = ((y * scaleY + sy) * canvas.width + pixX * scaleX + sx) * 4;
+            px[idx+1] = 255; // green
+            px[idx+3] = 255; // alpha
+          }
+        }
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function esc(c) {
+  return c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '&' ? '&amp;' : c;
+}
+
+async function runLoop() {
+  if (!emu) return;
+  if (emu.is_running() && !emu.needs_key() && !emu.needs_net()) {
+    emu.run(50000);
+  }
+  // Handle pending network requests
+  if (emu.needs_net()) {
+    const connId = emu.waiting_net_id();
+    if (connId >= 0) {
+      const req = emu.net_get_request(connId);
+      if (req) {
+        try {
+          if (emu.net_is_ws(connId)) {
+            handleWsRequest(connId, req);
+          } else {
+            await handleNetRequest(connId, req);
+          }
+        } catch(e) {
+          const errMsg = new TextEncoder().encode('ERROR: ' + e.message + '\r\n');
+          emu.net_set_response(connId, errMsg);
+        }
+      }
+    }
+  }
+  flushWsWrites();
+  renderVDU();
+  renderHRG();
+  requestAnimationFrame(runLoop);
+}
+
+async function handleNetRequest(connId, req) {
+  // Parse "VERB URL\nHeaders..." format
+  const lines = req.split('\n');
+  const firstLine = lines[0].trim();
+  const spaceIdx = firstLine.indexOf(' ');
+  if (spaceIdx < 0) return;
+
+  const verb = firstLine.substring(0, spaceIdx).toUpperCase();
+  const url = firstLine.substring(spaceIdx + 1).trim();
+
+  // Collect headers
+  const headers = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) break;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx > 0) {
+      headers[line.substring(0, colonIdx).trim()] = line.substring(colonIdx + 1).trim();
+    }
+  }
+
+  // Get body for POST/PUT
+  const body = emu.net_get_request_body(connId);
+  const hasBody = body.length > 0 && (verb === 'POST' || verb === 'PUT' || verb === 'PATCH');
+
+  status.textContent = `${verb} ${url}...`;
+
+  const opts = { method: verb, headers };
+  if (hasBody) opts.body = new Uint8Array(body);
+
+  const resp = await fetch(url);
+  const data = new Uint8Array(await resp.arrayBuffer());
+  emu.net_set_response(connId, data);
+
+  status.textContent = `${verb} ${url} — ${resp.status} (${data.length} bytes)`;
+}
+
+// WebSocket connections (keyed by connection ID)
+const wsSockets = {};
+
+function handleWsRequest(connId, req) {
+  const url = req.trim();
+  status.textContent = `WSK ${url}...`;
+
+  const ws = new WebSocket(url);
+  wsSockets[connId] = ws;
+
+  ws.onopen = () => {
+    status.textContent = `WSK ${url} connected`;
+    // Send any data that was written before connection opened
+    const body = emu.net_get_request_body(connId);
+    if (body.length > 0) {
+      ws.send(body);
+    }
+    // Unblock the emulator (ctl write is done)
+    emu.net_set_response(connId, new Uint8Array(0));
+  };
+
+  ws.onmessage = (event) => {
+    // Convert message to bytes and feed to emulator
+    if (typeof event.data === 'string') {
+      emu.net_ws_receive(connId, new TextEncoder().encode(event.data));
+    } else if (event.data instanceof ArrayBuffer) {
+      emu.net_ws_receive(connId, new Uint8Array(event.data));
+    } else {
+      // Blob
+      event.data.arrayBuffer().then(buf => {
+        emu.net_ws_receive(connId, new Uint8Array(buf));
+      });
+    }
+  };
+
+  ws.onclose = () => {
+    status.textContent = `WSK ${url} closed`;
+    delete wsSockets[connId];
+  };
+
+  ws.onerror = (e) => {
+    const err = new TextEncoder().encode('WSK ERROR\r\n');
+    emu.net_set_response(connId, err);
+    delete wsSockets[connId];
+  };
+}
+
+// Flush pending WebSocket writes from the emulator
+function flushWsWrites() {
+  for (const [id, ws] of Object.entries(wsSockets)) {
+    if (ws.readyState === WebSocket.OPEN) {
+      const data = emu.net_ws_take_send(parseInt(id));
+      if (data.length > 0) {
+        ws.send(data);
+      }
+    }
+  }
+}
+
+// Keyboard — capture on text screen
+textScreen.addEventListener('keydown', (e) => {
+  if (!emu) return;
+  e.preventDefault();
+  let ch = 0;
+  if (e.key === 'Enter') ch = 0x0D;
+  else if (e.key === 'Backspace') ch = 0x08;
+  else if (e.key === 'Tab') ch = 0x09;
+  else if (e.key === 'Escape') ch = 0x1B;
+  else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
+  else if (e.key.length === 1) ch = e.key.charCodeAt(0);
+  if (ch > 0 && ch < 128) emu.key_press(ch);
+});
+
+// File loading
+document.getElementById('loadBtn').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const data = new Uint8Array(await file.arrayBuffer());
+  emu.load_com(data);
+  status.textContent = `Loaded ${file.name} (${data.length} bytes)`;
+  textScreen.focus();
+});
+
+// Quick-load bundled .COM files
+document.querySelectorAll('.com-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const url = btn.dataset.com;
+    status.textContent = `Loading ${url}...`;
+    const resp = await fetch(url);
+    const data = new Uint8Array(await resp.arrayBuffer());
+    emu.load_com(data);
+    status.textContent = `Loaded ${url} (${data.length} bytes)`;
+    textScreen.focus();
+  });
+});
+
+// HRG demo
+document.getElementById('hrgDemo').addEventListener('click', () => {
+  if (!emu) return;
+  const w = emu.hrg_width(), h = emu.hrg_height();
+  emu.hrg_clear();
+  emu.hrg_toggle(true);
+
+  // Border
+  for (let x = 0; x < w; x++) { emu.hrg_set_pixel(x, 0); emu.hrg_set_pixel(x, h-1); }
+  for (let y = 0; y < h; y++) { emu.hrg_set_pixel(0, y); emu.hrg_set_pixel(w-1, y); }
+
+  // Diagonals
+  for (let i = 0; i < h; i++) {
+    emu.hrg_set_pixel(Math.floor(i * w / h), i);
+    emu.hrg_set_pixel(w - 1 - Math.floor(i * w / h), i);
+  }
+
+  // Circle
+  const cx = w/2, cy = h/2, r = Math.min(w, h) * 0.4;
+  for (let a = 0; a < 720; a++) {
+    const rad = a * Math.PI / 360;
+    const x = Math.floor(cx + r * Math.cos(rad));
+    const y = Math.floor(cy + r * Math.sin(rad));
+    if (x >= 0 && x < w && y >= 0 && y < h) emu.hrg_set_pixel(x, y);
+  }
+
+  // Sine wave
+  for (let x = 10; x < w - 10; x++) {
+    const y = Math.floor(cy + Math.sin(x * 0.05) * 40);
+    if (y >= 0 && y < h) emu.hrg_set_pixel(x, y);
+  }
+
+  status.textContent = `HRG demo (${w}×${h})`;
+  textScreen.focus();
+});
+
+// 640 mode toggle
+document.getElementById('hiresBtn').addEventListener('click', () => {
+  if (!emu) return;
+  const hires = !emu.hrg_is_hires();
+  emu.hrg_set_hires(hires);
+  hrgModeLabel.textContent = hires ? '640×192' : '320×192';
+  document.getElementById('hiresBtn').textContent = hires ? '320 Mode' : '640 Mode';
+  status.textContent = `HRG mode: ${hires ? '640' : '320'}×192`;
+  textScreen.focus();
+});
+
+// Clear HRG
+document.getElementById('clearHrg').addEventListener('click', () => {
+  if (!emu) return;
+  emu.hrg_clear();
+  textScreen.focus();
+});
+
+// Mount network drive
+document.getElementById('netBtn').addEventListener('click', () => {
+  if (!emu) return;
+  emu.net_mount(13); // N = 13 (0=A, 13=N)
+  status.textContent = 'Network mounted on N: — use N:CLONE.WWW, N:0.CTL, N:0.DATA';
+  textScreen.focus();
+});
+
+start();
+</script>
+</body>
+</html>
