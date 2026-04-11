@@ -4,7 +4,6 @@ use crate::ccp;
 use crate::console::Console;
 use crate::disk::DiskSystem;
 use crate::vdu::Vdu;
-use std::path::PathBuf;
 
 // CP/M 2.2 memory map for a 64K system
 pub const BDOS_ENTRY: u16 = 0x0005;
@@ -23,7 +22,7 @@ pub struct Cpm {
 }
 
 impl Cpm {
-    pub fn new(drive_a: PathBuf) -> Self {
+    pub fn new() -> Self {
         let mut cpu = Cpu::new();
         setup_page_zero(&mut cpu);
         setup_bios_stubs(&mut cpu);
@@ -34,7 +33,7 @@ impl Cpm {
         Cpm {
             cpu,
             console: Console::new(),
-            disk: DiskSystem::new(drive_a),
+            disk: DiskSystem::new(),
             vdu,
             running: true,
         }

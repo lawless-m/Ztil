@@ -140,11 +140,11 @@ fn reset_disk(cpm: &mut Cpm) {
 
 fn select_disk(cpm: &mut Cpm) {
     let disk = cpm.cpu.e;
-    if disk == 0 {
-        cpm.disk.current_disk = 0;
+    if cpm.disk.drive_path(disk + 1).is_some() {
+        cpm.disk.current_disk = disk;
         cpm.cpu.a = 0;
     } else {
-        cpm.cpu.a = 0xFF; // only drive A supported
+        cpm.cpu.a = 0xFF;
     }
 }
 
@@ -212,9 +212,10 @@ fn get_dpb(cpm: &mut Cpm) {
 
 fn open_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
     let name = fcb::name(&cpm.cpu, fcb_addr);
     let ext = fcb::ext(&cpm.cpu, fcb_addr);
-    if cpm.disk.open(fcb_addr, &name, &ext) {
+    if cpm.disk.open(fcb_addr, drv, &name, &ext) {
         fcb::clear(&mut cpm.cpu, fcb_addr);
         cpm.cpu.a = 0;
     } else {
@@ -225,18 +226,18 @@ fn open_file(cpm: &mut Cpm) {
 fn close_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
     if cpm.disk.close(fcb_addr) {
-        cpm.cpu.a = 0; // directory code 0 = success
+        cpm.cpu.a = 0;
     } else {
-        cpm.cpu.a = 0xFF; // file not found / not open
+        cpm.cpu.a = 0xFF;
     }
 }
 
 fn search_first(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
     let name = fcb::name(&cpm.cpu, fcb_addr);
     let ext = fcb::ext(&cpm.cpu, fcb_addr);
-    cpm.disk.search_results = cpm.disk.search_files(&name, &ext);
-    cpm.disk.search_index = 0;
+    cpm.disk.search_start(drv, &name, &ext);
     search_next(cpm);
 }
 
@@ -244,20 +245,20 @@ fn search_next(cpm: &mut Cpm) {
     if cpm.disk.search_index < cpm.disk.search_results.len() {
         let filename = cpm.disk.search_results[cpm.disk.search_index].clone();
         cpm.disk.search_index += 1;
-        // Write directory entry at DMA buffer
         let dma = cpm.disk.dma_addr;
         fcb::write_dir_entry(&mut cpm.cpu, dma, &filename);
-        cpm.cpu.a = 0; // dir code 0 = entry at DMA+0
+        cpm.cpu.a = 0;
     } else {
-        cpm.cpu.a = 0xFF; // no more
+        cpm.cpu.a = 0xFF;
     }
 }
 
 fn delete_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
     let name = fcb::name(&cpm.cpu, fcb_addr);
     let ext = fcb::ext(&cpm.cpu, fcb_addr);
-    if cpm.disk.delete(&name, &ext) {
+    if cpm.disk.delete(drv, &name, &ext) {
         cpm.cpu.a = 0;
     } else {
         cpm.cpu.a = 0xFF;
@@ -268,12 +269,11 @@ fn read_seq(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
     let mem: &mut [u8; 0x10000] = &mut cpm.cpu.mem;
     if cpm.disk.read_seq(fcb_addr, mem) {
-        // Advance FCB record counter
         let cr = cpm.cpu.read8(fcb_addr + 32);
         cpm.cpu.write8(fcb_addr + 32, cr.wrapping_add(1));
         cpm.cpu.a = 0;
     } else {
-        cpm.cpu.a = 1; // EOF
+        cpm.cpu.a = 1;
     }
 }
 
@@ -285,15 +285,16 @@ fn write_seq(cpm: &mut Cpm) {
         cpm.cpu.write8(fcb_addr + 32, cr.wrapping_add(1));
         cpm.cpu.a = 0;
     } else {
-        cpm.cpu.a = 2; // disk full
+        cpm.cpu.a = 2;
     }
 }
 
 fn make_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
     let name = fcb::name(&cpm.cpu, fcb_addr);
     let ext = fcb::ext(&cpm.cpu, fcb_addr);
-    if cpm.disk.make(fcb_addr, &name, &ext) {
+    if cpm.disk.make(fcb_addr, drv, &name, &ext) {
         fcb::clear(&mut cpm.cpu, fcb_addr);
         cpm.cpu.a = 0;
     } else {
@@ -303,13 +304,17 @@ fn make_file(cpm: &mut Cpm) {
 
 fn rename_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
     let old_name = fcb::name(&cpm.cpu, fcb_addr);
     let old_ext = fcb::ext(&cpm.cpu, fcb_addr);
-    // New name is at FCB+16
     let new_name = fcb::name(&cpm.cpu, fcb_addr + 16);
     let new_ext = fcb::ext(&cpm.cpu, fcb_addr + 16);
-    let old_path = cpm.disk.cpm_to_host_path(&old_name, &old_ext);
-    let new_path = cpm.disk.cpm_to_host_path(&new_name, &new_ext);
+    let Some(old_path) = cpm.disk.cpm_to_host_path(drv, &old_name, &old_ext) else {
+        cpm.cpu.a = 0xFF; return;
+    };
+    let Some(new_path) = cpm.disk.cpm_to_host_path(drv, &new_name, &new_ext) else {
+        cpm.cpu.a = 0xFF; return;
+    };
     if std::fs::rename(&old_path, &new_path).is_ok() {
         cpm.cpu.a = 0;
     } else {
@@ -318,9 +323,9 @@ fn rename_file(cpm: &mut Cpm) {
 }
 
 fn login_vector(cpm: &mut Cpm) {
-    // Bit 0 = drive A logged in
-    cpm.cpu.h = 0;
-    cpm.cpu.l = 0x01;
+    let vec = cpm.disk.login_vector();
+    cpm.cpu.l = vec as u8;
+    cpm.cpu.h = (vec >> 8) as u8;
 }
 
 fn read_rand(cpm: &mut Cpm) {
@@ -369,10 +374,13 @@ fn write_rand(cpm: &mut Cpm) {
 
 fn file_size(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
     let name = fcb::name(&cpm.cpu, fcb_addr);
     let ext = fcb::ext(&cpm.cpu, fcb_addr);
-    let path = cpm.disk.cpm_to_host_path(&name, &ext);
-    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let size = cpm.disk.cpm_to_host_path(drv, &name, &ext)
+        .and_then(|p| std::fs::metadata(&p).ok())
+        .map(|m| m.len())
+        .unwrap_or(0);
     let records = ((size + 127) / 128) as u32;
     // Write R0, R1, R2 into FCB
     cpm.cpu.write8(fcb_addr + 33, records as u8);

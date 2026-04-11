@@ -12,18 +12,18 @@ impl Drop for RawModeGuard {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Usage: rm380z [--drive-a <dir>] [file.com [args...]]
-    let mut drive_a = PathBuf::from(".");
+    // Usage: rm380z [-a <dir>] [-b <dir>] [-c <dir>] [-d <dir>] [file.com [args...]]
+    let mut drives: Vec<(u8, PathBuf)> = Vec::new();
     let mut com_file: Option<String> = None;
     let mut com_args = String::new();
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--drive-a" | "-a" => {
-                i += 1;
-                if i < args.len() { drive_a = PathBuf::from(&args[i]); }
-            }
+            "--drive-a" | "-a" => { i += 1; if i < args.len() { drives.push((0, PathBuf::from(&args[i]))); } }
+            "--drive-b" | "-b" => { i += 1; if i < args.len() { drives.push((1, PathBuf::from(&args[i]))); } }
+            "--drive-c" | "-c" => { i += 1; if i < args.len() { drives.push((2, PathBuf::from(&args[i]))); } }
+            "--drive-d" | "-d" => { i += 1; if i < args.len() { drives.push((3, PathBuf::from(&args[i]))); } }
             _ => {
                 if com_file.is_none() {
                     com_file = Some(args[i].clone());
@@ -36,23 +36,28 @@ fn main() {
         i += 1;
     }
 
-    let mut cpm = Cpm::new(drive_a.clone());
+    // Default: mount current directory as A: if no drives specified
+    if drives.is_empty() {
+        drives.push((0, PathBuf::from(".")));
+    }
 
-    // If a .COM file was specified, load it directly
+    let mut cpm = Cpm::new();
+    for (drv, path) in &drives {
+        cpm.disk.mount(*drv, path.clone());
+    }
+
     if let Some(ref com) = com_file {
         let path = if PathBuf::from(com).exists() {
             PathBuf::from(com)
+        } else if let Some(dir) = cpm.disk.drive_path(1) { // drive A = index 0+1
+            dir.join(com)
         } else {
-            drive_a.join(com)
+            PathBuf::from(com)
         };
 
         match std::fs::read(&path) {
             Ok(data) => {
-                let tail = if com_args.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", com_args)
-                };
+                let tail = if com_args.is_empty() { String::new() } else { format!(" {}", com_args) };
                 cpm.load_com(&data, &tail);
             }
             Err(e) => {
@@ -68,11 +73,7 @@ fn main() {
         None
     };
 
-    // Clear host terminal and set up for VDU display
     eprint!("\x1b[2J\x1b[H");
-
-    // Write banner to VDU
     cpm.vdu_print("RM 380Z CP/M 2.2\r\n\r\n");
-
     cpm.run();
 }

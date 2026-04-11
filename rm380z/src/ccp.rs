@@ -29,10 +29,19 @@ pub fn run(cpm: &mut Cpm) {
             "USER" => {}
             "EXIT" => { cpm.running = false; return; }
             _ => {
-                if load_transient(cpm, &cmd, &args) {
+                // Drive switch: "B:" or "A:" etc.
+                if cmd.len() == 2 && cmd.as_bytes()[1] == b':' {
+                    let drv = cmd.as_bytes()[0] - b'A';
+                    if cpm.disk.drive_path(drv + 1).is_some() {
+                        cpm.disk.current_disk = drv;
+                    } else {
+                        cpm.vdu_print("Invalid drive\r\n");
+                    }
+                } else if load_transient(cpm, &cmd, &args) {
                     return;
+                } else {
+                    cpm.vdu_print(&format!("{}?\r\n", cmd));
                 }
-                cpm.vdu_print(&format!("{}?\r\n", cmd));
             }
         }
     }
@@ -57,7 +66,7 @@ fn cmd_dir(cpm: &mut Cpm, args: &str) {
         for i in ext_part.len()..3 { ext[i] = b' '; }
     }
 
-    let files = cpm.disk.search_files(&name, &ext);
+    let files = cpm.disk.search_files(0, &name, &ext);
     if files.is_empty() {
         cpm.vdu_print("No file\r\n");
         return;
@@ -119,10 +128,11 @@ fn cmd_ren(cpm: &mut Cpm, args: &str) {
 }
 
 fn load_transient(cpm: &mut Cpm, cmd: &str, args: &str) -> bool {
-    let files = cpm.disk.search_files(&padded_name(cmd), b"COM");
+    let files = cpm.disk.search_files(0, &padded_name(cmd), b"COM");
     if files.is_empty() { return false; }
 
-    let path = cpm.disk.drive_a.join(&files[0]);
+    let Some(dir) = cpm.disk.drive_path(0) else { return false };
+    let path = dir.join(&files[0]);
     let Ok(data) = std::fs::read(&path) else { return false };
 
     if data.len() > (BDOS_ADDR - TPA_BASE) as usize {
@@ -153,5 +163,6 @@ fn padded_name(name: &str) -> [u8; 8] {
 }
 
 fn parse_host_path(cpm: &Cpm, filename: &str) -> std::path::PathBuf {
-    cpm.disk.drive_a.join(filename.to_uppercase())
+    let dir = cpm.disk.drive_path(0).cloned().unwrap_or_default();
+    dir.join(filename.to_uppercase())
 }
