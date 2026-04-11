@@ -56,13 +56,17 @@ impl Emulator {
             net: NetState::new(),
             net_fcbs: HashMap::new(),
         };
-        emu.vdu.write_str(&mut emu.cpu.mem, "RM 380Z CP/M 2.2\r\n\r\nA>");
+        emu.vdu.write_str(&mut emu.cpu.mem, "RM 380Z CP/M 2.2\r\n\r\nLoad a .COM file to run.\r\n");
+        emu.running = false; // idle until a program is loaded
         emu
     }
 
     pub fn load_com(&mut self, data: &[u8]) {
         page_zero::load_com(&mut self.cpu, data, "");
+        self.running = true;
         self.waiting_for_key = false;
+        self.waiting_for_claude = false;
+        self.waiting_for_net = None;
         for i in 0..rm380z_core::vdu::VDU_SIZE {
             self.cpu.mem[rm380z_core::vdu::VDU_BASE as usize + i] = b' ';
         }
@@ -86,8 +90,8 @@ impl Emulator {
 
             if self.cpu.halted {
                 self.cpu.halted = false;
-                self.running = false;
-                continue;
+                self.go_idle();
+                break;
             }
 
             if self.cpu.pc == BDOS_ENTRY || self.cpu.pc == BDOS_ADDR {
@@ -212,6 +216,11 @@ impl Emulator {
 // --- Internal ---
 
 impl Emulator {
+    fn go_idle(&mut self) {
+        self.running = false;
+        self.vdu.write_str(&mut self.cpu.mem, "\r\nLoad a .COM file to run.\r\n");
+    }
+
     fn is_net_drive(&self, fcb_drive: u8) -> bool {
         let Some(net_drv) = self.net_drive else { return false };
         let d = if fcb_drive == 0 { 0 } else { fcb_drive - 1 };
@@ -220,7 +229,7 @@ impl Emulator {
 
     fn handle_bios(&mut self, func: u8) {
         match func {
-            0 | 1 => { self.running = false; return; }
+            0 | 1 => { self.go_idle(); return; }
             2 => { self.cpu.a = if self.key_buffer.is_empty() { 0 } else { 0xFF }; }
             3 => {
                 if let Some(ch) = self.key_buffer.pop_front() {
@@ -236,7 +245,7 @@ impl Emulator {
 
     fn handle_bdos(&mut self, func: u8) {
         match func {
-            0 => { self.running = false; }
+            0 => { self.go_idle(); }
             1 => {
                 if let Some(ch) = self.key_buffer.pop_front() {
                     self.vdu.write_char(&mut self.cpu.mem, ch);
