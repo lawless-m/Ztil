@@ -130,6 +130,47 @@ impl NetDrive {
         Some(buf)
     }
 
+    /// Read response via `claude -p` CLI on the host. No API key needed.
+    pub fn read_claude_cli(&mut self) -> Option<[u8; 128]> {
+        let claude = self.claude.as_mut()?;
+        if !claude.responded {
+            let prompt = String::from_utf8_lossy(&claude.prompt).trim().to_string();
+            if prompt.is_empty() { return None; }
+
+            let result = std::process::Command::new("claude")
+                .arg("-p")
+                .arg(&prompt)
+                .output();
+
+            match result {
+                Ok(output) => {
+                    if output.status.success() {
+                        claude.resp_data = output.stdout;
+                    } else {
+                        claude.resp_data = format!("ERROR: {}\r\n",
+                            String::from_utf8_lossy(&output.stderr)).into_bytes();
+                    }
+                }
+                Err(e) => {
+                    claude.resp_data = format!("ERROR: claude command not found: {}\r\n", e).into_bytes();
+                }
+            }
+            // Normalize line endings for CP/M
+            let text = String::from_utf8_lossy(&claude.resp_data).replace('\n', "\r\n");
+            claude.resp_data = text.into_bytes();
+            claude.resp_pos = 0;
+            claude.responded = true;
+        }
+
+        if claude.resp_pos >= claude.resp_data.len() { return None; }
+        let mut buf = [0x1Au8; 128];
+        let remaining = claude.resp_data.len() - claude.resp_pos;
+        let n = remaining.min(128);
+        buf[..n].copy_from_slice(&claude.resp_data[claude.resp_pos..claude.resp_pos + n]);
+        claude.resp_pos += 128;
+        Some(buf)
+    }
+
     /// Close CLAUDE.AI conversation.
     pub fn close_claude(&mut self) {
         self.claude = None;

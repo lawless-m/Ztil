@@ -226,6 +226,9 @@ fn parse_net_fcb(cpu: &z80::cpu::Cpu, fcb: u16) -> Option<(&'static str, Option<
     if name == "CLAUDE" && ext == "KEY" {
         return Some(("apikey", None));
     }
+    if name == "CLAUDE" && ext == "CLI" {
+        return Some(("cli", None));
+    }
     if name == "CLAUDE" && ext == "MNS" {
         return Some(("models", None));
     }
@@ -251,7 +254,7 @@ fn open_file(cpm: &mut Cpm) {
                 match ftype {
                     "clone" => { net.clone_conn(); cpm.cpu.a = 0; }
                     "ctl" | "data" => { cpm.cpu.a = if id.is_some() { 0 } else { 0xFF }; }
-                    "claude" => { net.open_claude(); cpm.cpu.a = 0; }
+                    "claude" | "cli" => { net.open_claude(); cpm.cpu.a = 0; }
                     "apikey" | "setmodel" => { cpm.cpu.a = 0; }
                     "models" => { cpm.cpu.a = 0; }
                     _ => { cpm.cpu.a = 0xFF; }
@@ -353,6 +356,15 @@ fn read_seq(cpm: &mut Cpm) {
                         cpm.cpu.a = 1;
                     }
                 }
+                "cli" => {
+                    if let Some(buf) = net.read_claude_cli() {
+                        let dma = cpm.disk.dma_addr as usize;
+                        cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
+                        cpm.cpu.a = 0;
+                    } else {
+                        cpm.cpu.a = 1;
+                    }
+                }
                 "models" => {
                     let models = net.get_models();
                     let dma = cpm.disk.dma_addr as usize;
@@ -391,7 +403,7 @@ fn write_seq(cpm: &mut Cpm) {
             match ftype {
                 "ctl" => { if let Some(id) = id { net.write_ctl(id, &data); } }
                 "data" => { if let Some(id) = id { net.write_data(id, &data); } }
-                "claude" => { net.write_claude(&data); }
+                "claude" | "cli" => { net.write_claude(&data); }
                 "apikey" => { net.set_api_key(&data); }
                 "setmodel" => { net.set_model(&data); }
                 _ => {}
