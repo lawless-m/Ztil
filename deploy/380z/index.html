@@ -606,9 +606,9 @@ document.getElementById('copyVdu').addEventListener('click', () => {
   });
 });
 
-function openManual(which) {
+window.openManual = function(which) {
   window.open('manual-' + which + '.html', which + '_manual', 'width=600,height=700,scrollbars=yes');
-}
+};
 
 function typeFile(name) {
   if (!emu) return;
