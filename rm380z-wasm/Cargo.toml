@@ -8,4 +8,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 z80 = { path = "../z80" }
+rm380z-core = { path = "../rm380z-core" }
 wasm-bindgen = "0.2"

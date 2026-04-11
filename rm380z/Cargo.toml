@@ -9,5 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 z80 = { path = "../z80" }
+rm380z-core = { path = "../rm380z-core" }
 crossterm = "0.29.0"
 ureq = "2"
