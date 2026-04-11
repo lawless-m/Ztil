@@ -606,30 +606,40 @@ document.getElementById('copyVdu').addEventListener('click', () => {
   });
 });
 
+const manualCache = {};
 window.openManual = async function(which) {
   let panel = document.getElementById('manual-panel');
   if (!panel) {
     panel = document.createElement('div');
     panel.id = 'manual-panel';
-    panel.style.cssText = 'position:fixed;right:20px;top:20px;width:500px;max-height:80vh;overflow-y:auto;' +
-      'background:#111;border:2px solid #0a0;border-radius:8px;padding:16px;z-index:9999;' +
-      'box-shadow:0 0 30px rgba(0,255,0,0.3);font-family:monospace;color:#0f0;font-size:13px;line-height:1.4';
-    const close = document.createElement('button');
-    close.textContent = 'X';
-    close.style.cssText = 'position:absolute;right:8px;top:8px;background:#0a0;color:#000;border:none;' +
-      'padding:2px 8px;cursor:pointer;font-family:monospace;border-radius:3px';
-    close.onclick = () => panel.style.display = 'none';
-    panel.appendChild(close);
-    const content = document.createElement('div');
-    content.id = 'manual-content';
-    panel.appendChild(content);
+    panel.style.cssText = 'position:fixed;right:20px;top:20px;width:500px;max-height:80vh;' +
+      'background:#111;border:2px solid #0a0;border-radius:8px;z-index:9999;' +
+      'box-shadow:0 0 30px rgba(0,255,0,0.3);font-family:monospace;color:#0f0;font-size:13px;display:flex;flex-direction:column';
+    panel.innerHTML = '<div id="manual-tabs" style="display:flex;border-bottom:1px solid #0a0;padding:0">' +
+      '<button class="mtab" data-m="cpm" style="flex:1;background:#1a1a1a;color:#0a0;border:none;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">CP/M</button>' +
+      '<button class="mtab" data-m="mbasic" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">MBASIC</button>' +
+      '<button class="mtab" data-m="sargon" style="flex:1;background:#1a1a1a;color:#0a0;border:none;border-left:1px solid #0a0;padding:6px;cursor:pointer;font-family:monospace;font-size:12px">Sargon</button>' +
+      '<button id="manual-close" style="background:#0a0;color:#000;border:none;padding:6px 10px;cursor:pointer;font-family:monospace">X</button>' +
+      '</div><div id="manual-content" style="overflow-y:auto;padding:12px;max-height:calc(80vh - 35px)"></div>';
     document.body.appendChild(panel);
+    document.getElementById('manual-close').onclick = () => panel.style.display = 'none';
+    panel.querySelectorAll('.mtab').forEach(btn => {
+      btn.onclick = () => openManual(btn.dataset.m);
+    });
   }
-  const resp = await fetch('manual-' + which + '.html');
-  const html = await resp.text();
-  const match = html.match(/<body>([\s\S]*)<\/body>/i);
-  document.getElementById('manual-content').innerHTML = match ? match[1] : html;
-  panel.style.display = 'block';
+  // Highlight active tab
+  panel.querySelectorAll('.mtab').forEach(btn => {
+    btn.style.background = btn.dataset.m === which ? '#0a0' : '#1a1a1a';
+    btn.style.color = btn.dataset.m === which ? '#000' : '#0a0';
+  });
+  if (!manualCache[which]) {
+    const resp = await fetch('manual-' + which + '.html');
+    const html = await resp.text();
+    const match = html.match(/<body>([\s\S]*)<\/body>/i);
+    manualCache[which] = match ? match[1] : html;
+  }
+  document.getElementById('manual-content').innerHTML = manualCache[which];
+  panel.style.display = 'flex';
 };
 
 function typeFile(name) {
