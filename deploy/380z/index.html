@@ -96,17 +96,20 @@
 <div id="controls">
   <button id="loadBtn">Load .COM</button>
   <input type="file" id="fileInput" accept=".com,.COM">
-  <button class="com-btn" data-com="com/HELLO.COM">Hello</button>
-  <button class="com-btn" data-com="com/SARGON.COM">Sargon Chess</button>
-  <button class="com-btn" data-com="com/MBASIC.COM">MBASIC</button>
-  <button class="com-btn" data-com="com/CLAUDE.COM">Claude</button>
-  <button class="com-btn" data-com="com/ED.COM">ED</button>
-  <button class="com-btn" data-com="com/ASM.COM">ASM</button>
-  <button class="com-btn" data-com="com/LOAD.COM">LOAD</button>
-  <button class="com-btn" data-com="com/DDT.COM">DDT</button>
-  <button class="com-btn" data-com="com/STAT.COM">STAT</button>
-  <button class="com-btn" data-com="com/PIP.COM">PIP</button>
-  <button class="com-btn" data-com="com/DUMP.COM">DUMP</button>
+  <select id="comSelect" style="background:#0a0;color:#000;font-family:monospace;font-size:13px;padding:5px;border:none;border-radius:4px;cursor:pointer">
+    <option value="">Run program...</option>
+    <option value="com/MBASIC.COM">MBASIC - BASIC interpreter</option>
+    <option value="com/SARGON.COM">SARGON - Chess</option>
+    <option value="com/CLAUDE.COM">CLAUDE - Ask Claude</option>
+    <option value="com/ED.COM">ED - Line editor</option>
+    <option value="com/ASM.COM">ASM - 8080 assembler</option>
+    <option value="com/LOAD.COM">LOAD - HEX to COM</option>
+    <option value="com/DDT.COM">DDT - Debugger</option>
+    <option value="com/STAT.COM">STAT - Disk status</option>
+    <option value="com/PIP.COM">PIP - File copy</option>
+    <option value="com/DUMP.COM">DUMP - Hex dump</option>
+    <option value="com/HELLO.COM">HELLO - Test</option>
+  </select>
   <button id="hrgDemo">HRG Demo</button>
   <button id="hiresBtn">640 Mode</button>
   <button id="clearHrg">Clear HRG</button>
@@ -198,14 +201,13 @@ async function start() {
   emu.net_mount(13);
   connectClaude();
 
-  // Pre-load bundled .COM files
-  for (const btn of document.querySelectorAll('.com-btn')) {
-    const url = btn.dataset.com;
-    const name = url.split('/').pop();
+  // Pre-load all bundled programs
+  for (const opt of document.querySelectorAll('#comSelect option[value]')) {
+    if (!opt.value) continue;
     try {
-      const resp = await fetch(url);
+      const resp = await fetch(opt.value);
       const data = new Uint8Array(await resp.arrayBuffer());
-      emu.add_file(name, data);
+      emu.add_file(opt.value.split('/').pop(), data);
     } catch(e) {}
   }
 
@@ -542,20 +544,19 @@ fileInput.addEventListener('change', async (e) => {
   textScreen.focus();
 });
 
-// Quick-load bundled .COM files
-document.querySelectorAll('.com-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const url = btn.dataset.com;
-    const name = url.split('/').pop();
-    status.textContent = `Loading ${name}...`;
-    const resp = await fetch(url);
-    const data = new Uint8Array(await resp.arrayBuffer());
-    emu.add_file(name, data);
-    emu.load_com(data);
-    status.textContent = `Running ${name}`;
-    ccpLine = '';
-    textScreen.focus();
-  });
+// Program dropdown
+document.getElementById('comSelect').addEventListener('change', async (e) => {
+  const url = e.target.value;
+  if (!url || !emu) return;
+  const name = url.split('/').pop();
+  status.textContent = 'Loading ' + name + '...';
+  const resp = await fetch(url);
+  const data = new Uint8Array(await resp.arrayBuffer());
+  emu.add_file(name, data);
+  emu.load_com(data);
+  status.textContent = 'Running ' + name;
+  ccpLine = '';
+  e.target.value = '';
 });
 
 // HRG demo
