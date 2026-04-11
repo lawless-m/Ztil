@@ -46,12 +46,15 @@ impl Cpm {
 
             // BIOS warm boot trap (JP 0 → JP FA03 → HALT stub)
             if self.cpu.halted || self.cpu.pc == BIOS_BASE + 3 {
+                if std::env::var("CPM_TRACE").is_ok() {
+                    eprintln!("[BOOT] PC={:04X} SP={:04X}", self.cpu.pc, self.cpu.sp);
+                }
                 self.cpu.halted = false;
                 self.warm_boot();
                 continue;
             }
 
-            if self.cpu.pc == BDOS_ENTRY {
+            if self.cpu.pc == BDOS_ENTRY || self.cpu.pc == BDOS_ADDR {
                 let func = self.cpu.c;
                 bdos::dispatch(self);
                 // Warm boot (C=0) sets PC directly; don't pop return address
@@ -95,6 +98,8 @@ impl Cpm {
 
         self.cpu.pc = TPA_BASE;
         self.cpu.sp = BDOS_ADDR;
+        // Push warm boot address so RET = JP 0000h (standard CP/M convention)
+        self.cpu.push16(0x0000);
         self.disk.dma_addr = DMA_DEFAULT;
     }
 

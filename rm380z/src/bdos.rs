@@ -4,6 +4,18 @@ use crate::fcb;
 /// Dispatch a BDOS call based on the function number in register C.
 pub fn dispatch(cpm: &mut Cpm) {
     let func = cpm.cpu.c;
+    // Trace all BDOS calls for debugging
+    let tracing = std::env::var("CPM_TRACE").is_ok();
+    let de_before = cpm.cpu.de();
+    if tracing {
+        let mut info = format!("[BDOS] F{:<2}", func);
+        if func >= 15 && func <= 36 {
+            let name: String = (0..8).map(|i| (cpm.cpu.read8(de_before + 1 + i) & 0x7F) as char).collect();
+            let ext: String = (0..3).map(|i| (cpm.cpu.read8(de_before + 9 + i) & 0x7F) as char).collect();
+            info += &format!(" DE={:04X} [{}.{}]", de_before, name.trim(), ext.trim());
+        }
+        eprint!("{}", info);
+    }
     match func {
         0 => sys_reset(cpm),
         1 => con_read(cpm),
@@ -42,6 +54,19 @@ pub fn dispatch(cpm: &mut Cpm) {
             cpm.cpu.a = 0;
             cpm.cpu.l = 0;
         }
+    }
+    // CP/M convention: A = L = return code, H = B = 0 for 8-bit returns.
+    // Many programs check HL instead of A.
+    match func {
+        12 | 24 | 27 | 31 => {} // these return 16-bit values in HL, don't overwrite
+        _ => {
+            cpm.cpu.l = cpm.cpu.a;
+            cpm.cpu.h = 0;
+            cpm.cpu.b = cpm.cpu.a;
+        }
+    }
+    if tracing {
+        eprintln!(" → A={:02X} HL={:04X}", cpm.cpu.a, cpm.cpu.hl());
     }
 }
 
