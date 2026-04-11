@@ -60,7 +60,7 @@ pub struct Emulator {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum NetFileType { Clone, Ctl, Data }
+enum NetFileType { Clone, Ctl, Data, Mem, DevCpu }
 
 #[wasm_bindgen]
 impl Emulator {
@@ -468,13 +468,14 @@ impl Emulator {
     }
 
     /// Parse network filename: CLONE.HTTP, CLONE.WS, 0.CTL, 0.DATA, etc.
-    fn parse_net_filename(&self, fcb: u16) -> Option<(NetFileType, Option<u8>, NetProto)> {
+    fn parse_net_filename(&self, fcb: u16) -> Option<(NetFileType, Option<u8>, NetProto, String)> {
         let name = self.fcb_name(fcb);
         let ext = self.fcb_ext(fcb);
         let name_str: String = name.iter().map(|&b| (b & 0x7F) as char).collect::<String>();
         let name_str = name_str.trim();
         let ext_str: String = ext.iter().map(|&b| (b & 0x7F) as char).collect::<String>();
         let ext_str = ext_str.trim();
+        let ext_owned = ext_str.to_string();
 
         if name_str == "CLONE" {
             let proto = match ext_str {
@@ -482,14 +483,21 @@ impl Emulator {
                 "WSK" => NetProto::WebSocket,
                 _ => return None,
             };
-            return Some((NetFileType::Clone, None, proto));
+            return Some((NetFileType::Clone, None, proto, ext_owned));
         }
 
-        // Numbered file: "0", "1", etc.
+        if name_str == "MEM" && matches!(ext_str, "0" | "1" | "2" | "3" | "VDU") {
+            return Some((NetFileType::Mem, None, NetProto::Http, ext_owned));
+        }
+
+        if name_str == "DEV" && ext_str == "CPU" {
+            return Some((NetFileType::DevCpu, None, NetProto::Http, ext_owned));
+        }
+
         let id: u8 = name_str.parse().ok()?;
         match ext_str {
-            "CTL" => Some((NetFileType::Ctl, Some(id), NetProto::Http)),
-            "DATA" => Some((NetFileType::Data, Some(id), NetProto::Http)),
+            "CTL" => Some((NetFileType::Ctl, Some(id), NetProto::Http, ext_owned)),
+            "DATA" => Some((NetFileType::Data, Some(id), NetProto::Http, ext_owned)),
             _ => None,
         }
     }
@@ -499,7 +507,7 @@ impl Emulator {
         let drv = self.fcb_drive(fcb);
 
         if self.is_net_drive(drv) {
-            if let Some((ftype, conn_id, proto)) = self.parse_net_filename(fcb) {
+            if let Some((ftype, conn_id, proto, ext_s)) = self.parse_net_filename(fcb) {
                 match ftype {
                     NetFileType::Clone => {
                         // Allocate new connection — ID returned on first read
@@ -525,6 +533,11 @@ impl Emulator {
                             self.net_fcbs.insert(fcb, (id, NetFileType::Data));
                             self.cpu.a = 0;
                         } else { self.cpu.a = 0xFF; }
+                    }
+                    NetFileType::Mem | NetFileType::DevCpu => {
+                        // Store ext in the FCB tracking so read/write knows the bank
+                        self.net_fcbs.insert(fcb, (0, ftype));
+                        self.cpu.a = 0;
                     }
                 }
             } else {
@@ -601,10 +614,48 @@ impl Emulator {
                         self.cpu.a = 1;
                     }
                 }
+                NetFileType::Mem => {
+                    let fcb_ext = self.fcb_ext(fcb);
+                    let ext: String = fcb_ext.iter().map(|&b| (b & 0x7F) as char).collect::<String>();
+                    let ext = ext.trim();
+                    let (base, size) = match ext {
+                        "0" => (0x0000usize, 0x4000usize),
+                        "1" => (0x4000, 0x4000),
+                        "2" => (0x8000, 0x4000),
+                        "3" => (0xC000, 0x4000),
+                        _ => (0xFC00, 0x0400), // VDU
+                    };
+                    let cr = self.cpu.read8(fcb + 32) as usize;
+                    let offset = base + cr * 128;
+                    if offset + 128 <= base + size {
+                        let dma = 0x0080u16;
+                        for i in 0..128 {
+                            self.cpu.write8(dma + i as u16, self.cpu.mem[offset + i]);
+                        }
+                        self.cpu.a = 0;
+                    } else {
+                        self.cpu.a = 1;
+                    }
+                }
+                NetFileType::DevCpu => {
+                    let text = format!(
+                        "A={:02X} F={:02X} BC={:04X} DE={:04X} HL={:04X}\r\nSP={:04X} PC={:04X} IX={:04X} IY={:04X}\r\n",
+                        self.cpu.a, self.cpu.f, self.cpu.bc(), self.cpu.de(), self.cpu.hl(),
+                        self.cpu.sp, self.cpu.pc, self.cpu.ix, self.cpu.iy
+                    );
+                    let dma = 0x0080u16;
+                    let mut buf = [0x1Au8; 128];
+                    let n = text.len().min(127);
+                    buf[..n].copy_from_slice(&text.as_bytes()[..n]);
+                    for i in 0..128 {
+                        self.cpu.write8(dma + i as u16, buf[i]);
+                    }
+                    self.cpu.a = 0;
+                }
                 _ => { self.cpu.a = 1; }
             }
         } else {
-            self.cpu.a = 1; // no file
+            self.cpu.a = 1;
         }
         self.cpu.l = self.cpu.a;
         self.cpu.h = 0;
@@ -638,6 +689,27 @@ impl Emulator {
                         }
                         self.cpu.a = 0;
                     } else { self.cpu.a = 2; }
+                }
+                NetFileType::Mem => {
+                    let fcb_ext = self.fcb_ext(fcb);
+                    let ext: String = fcb_ext.iter().map(|&b| (b & 0x7F) as char).collect::<String>();
+                    let ext = ext.trim();
+                    let (base, size) = match ext {
+                        "0" => (0x0000usize, 0x4000usize),
+                        "1" => (0x4000, 0x4000),
+                        "2" => (0x8000, 0x4000),
+                        "3" => (0xC000, 0x4000),
+                        _ => (0xFC00, 0x0400),
+                    };
+                    let cr = self.cpu.read8(fcb + 32) as usize;
+                    let offset = base + cr * 128;
+                    if offset + 128 <= base + size {
+                        let dma = 0x0080u16;
+                        for i in 0..128 {
+                            self.cpu.mem[offset + i] = self.cpu.read8(dma + i as u16);
+                        }
+                    }
+                    self.cpu.a = 0;
                 }
                 _ => { self.cpu.a = 2; }
             }
