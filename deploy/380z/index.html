@@ -155,8 +155,20 @@ async function start() {
   const wasm = await init();
   wasmMemory = wasm.memory;
   emu = new Emulator();
-  emu.net_mount(13); // auto-mount N: for network
+  emu.net_mount(13);
   connectClaude();
+
+  // Pre-load bundled .COM files
+  for (const btn of document.querySelectorAll('.com-btn')) {
+    const url = btn.dataset.com;
+    const name = url.split('/').pop();
+    try {
+      const resp = await fetch(url);
+      const data = new Uint8Array(await resp.arrayBuffer());
+      emu.add_file(name, data);
+    } catch(e) {}
+  }
+
   textScreen.focus();
   runLoop();
 }
@@ -233,8 +245,23 @@ function esc(c) {
   return c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '&' ? '&amp;' : c;
 }
 
+// CCP state for when emulator is idle
+let ccpLine = '';
+
 async function runLoop() {
   if (!emu) return;
+
+  // JS-side CCP: handle keyboard when emulator is idle
+  if (!emu.is_running()) {
+    while (true) {
+      // Process any pending keypresses
+      const keys = [];
+      // We can't read from key_buffer directly — instead, check if keys were pressed
+      // The keydown handler will call ccpKeyPress() when idle
+      break;
+    }
+  }
+
   if (emu.is_running() && !emu.needs_key() && !emu.needs_net() && !emu.needs_claude()) {
     emu.run(50000);
   }
@@ -384,7 +411,54 @@ textScreen.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') ch = 0x1B;
   else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
   else if (e.key.length === 1) ch = e.key.charCodeAt(0);
-  if (ch > 0 && ch < 128) emu.key_press(ch);
+  if (ch === 0 || ch >= 128) return;
+
+  if (!emu.is_running()) {
+    // CCP mode: handle locally
+    if (ch === 0x0D) {
+      emu.vdu_print('\r\n');
+      const cmd = ccpLine.trim().toUpperCase();
+      ccpLine = '';
+      if (cmd === 'DIR') {
+        const files = emu.list_files();
+        if (files.length === 0) {
+          emu.vdu_print('No file\r\n');
+        } else {
+          let col = 0;
+          for (const f of files) {
+            emu.vdu_print(f.padEnd(13));
+            col++;
+            if (col >= 3) { emu.vdu_print('\r\n'); col = 0; }
+          }
+          if (col > 0) emu.vdu_print('\r\n');
+        }
+        emu.vdu_print('A>');
+      } else if (cmd === 'EXIT') {
+        emu.vdu_print('Bye.\r\n');
+      } else if (cmd) {
+        if (emu.load_com_by_name(cmd)) {
+          status.textContent = `Running ${cmd}`;
+        } else {
+          emu.vdu_print(cmd + '?\r\n');
+          emu.vdu_print('A>');
+        }
+      } else {
+        emu.vdu_print('A>');
+      }
+    } else if (ch === 0x08) {
+      if (ccpLine.length > 0) {
+        ccpLine = ccpLine.slice(0, -1);
+        emu.vdu_write(0x08);
+        emu.vdu_write(0x20);
+        emu.vdu_write(0x08);
+      }
+    } else if (ch >= 0x20) {
+      ccpLine += String.fromCharCode(ch);
+      emu.vdu_write(ch);
+    }
+  } else {
+    emu.key_press(ch);
+  }
 });
 
 // File loading
@@ -393,8 +467,10 @@ fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const data = new Uint8Array(await file.arrayBuffer());
+  emu.add_file(file.name, data);
   emu.load_com(data);
   status.textContent = `Loaded ${file.name} (${data.length} bytes)`;
+  ccpLine = '';
   textScreen.focus();
 });
 
@@ -402,11 +478,14 @@ fileInput.addEventListener('change', async (e) => {
 document.querySelectorAll('.com-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const url = btn.dataset.com;
-    status.textContent = `Loading ${url}...`;
+    const name = url.split('/').pop();
+    status.textContent = `Loading ${name}...`;
     const resp = await fetch(url);
     const data = new Uint8Array(await resp.arrayBuffer());
+    emu.add_file(name, data);
     emu.load_com(data);
-    status.textContent = `Loaded ${url} (${data.length} bytes)`;
+    status.textContent = `Running ${name}`;
+    ccpLine = '';
     textScreen.focus();
   });
 });

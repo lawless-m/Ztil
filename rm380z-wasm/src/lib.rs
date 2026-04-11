@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use z80::cpu::Cpu;
 use rm380z_core::vdu::Vdu;
-use rm380z_core::page_zero::{self, BDOS_ENTRY, BDOS_ADDR, BIOS_HANDLERS};
+use rm380z_core::page_zero::{self, BDOS_ENTRY, BDOS_ADDR, BIOS_HANDLERS, CCP_ENTRY};
 use rm380z_core::bdos as bdos_core;
 use rm380z_core::net::NetState;
 use std::collections::{VecDeque, HashMap};
@@ -28,6 +28,8 @@ pub struct Emulator {
     net: NetState,
     /// FCB tracking: maps FCB address → (conn_id_or_0, file_type)
     net_fcbs: HashMap<u16, (u8, &'static str)>,
+    /// Stored .COM files (name → data) for the built-in CCP
+    files: HashMap<String, Vec<u8>>,
 }
 
 #[wasm_bindgen]
@@ -55,6 +57,7 @@ impl Emulator {
             net_drive: None,
             net: NetState::new(),
             net_fcbs: HashMap::new(),
+            files: HashMap::new(),
         };
         emu.vdu.write_str(&mut emu.cpu.mem, "RM 380Z CP/M 2.2\r\n\r\nLoad a .COM file to run.\r\n");
         emu.running = false; // idle until a program is loaded
@@ -126,6 +129,30 @@ impl Emulator {
     pub fn vdu_ptr(&self) -> *const u8 {
         &self.cpu.mem[rm380z_core::vdu::VDU_BASE as usize] as *const u8
     }
+    /// Store a .COM file for CCP to find.
+    pub fn add_file(&mut self, name: &str, data: &[u8]) {
+        self.files.insert(name.to_uppercase(), data.to_vec());
+    }
+
+    /// List stored file names.
+    pub fn list_files(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.files.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Load a .COM by name from stored files. Returns true if found.
+    pub fn load_com_by_name(&mut self, name: &str) -> bool {
+        let key = name.to_uppercase();
+        let key = if key.ends_with(".COM") { key } else { format!("{}.COM", key) };
+        if let Some(data) = self.files.get(&key).cloned() {
+            self.load_com(&data);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn cursor_row(&self) -> usize { self.vdu.cursor_row }
     pub fn cursor_col(&self) -> usize { self.vdu.cursor_col }
     pub fn needs_key(&self) -> bool { self.waiting_for_key }
@@ -218,7 +245,17 @@ impl Emulator {
 impl Emulator {
     fn go_idle(&mut self) {
         self.running = false;
-        self.vdu.write_str(&mut self.cpu.mem, "\r\nLoad a .COM file to run.\r\n");
+        self.vdu.write_str(&mut self.cpu.mem, "\r\nA>");
+    }
+
+    /// Write a character to the VDU (for JS-side CCP echo).
+    pub fn vdu_write(&mut self, ch: u8) {
+        self.vdu.write_char(&mut self.cpu.mem, ch);
+    }
+
+    /// Write a string to the VDU.
+    pub fn vdu_print(&mut self, s: &str) {
+        self.vdu.write_str(&mut self.cpu.mem, s);
     }
 
     fn is_net_drive(&self, fcb_drive: u8) -> bool {
