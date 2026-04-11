@@ -25,14 +25,10 @@ export class Emulator {
         const ret = wasm.emulator_cursor_row(this.__wbg_ptr);
         return ret >>> 0;
     }
-    /**
-     * Clear entire HRG framebuffer.
-     */
     hrg_clear() {
         wasm.emulator_hrg_clear(this.__wbg_ptr);
     }
     /**
-     * Clear a pixel.
      * @param {number} x
      * @param {number} y
      */
@@ -61,8 +57,6 @@ export class Emulator {
         return ret !== 0;
     }
     /**
-     * Get pointer to HRG framebuffer for direct JS access.
-     * 40 bytes/row × 192 rows, MSB = leftmost pixel.
      * @returns {number}
      */
     hrg_ptr() {
@@ -70,14 +64,12 @@ export class Emulator {
         return ret >>> 0;
     }
     /**
-     * Switch between 320×192 (false) and 640×192 (true) modes.
      * @param {boolean} hires
      */
     hrg_set_hires(hires) {
         wasm.emulator_hrg_set_hires(this.__wbg_ptr, hires);
     }
     /**
-     * Set a pixel. In 320 mode, x is 0-319. In 640 mode, x is 0-639.
      * @param {number} x
      * @param {number} y
      */
@@ -85,14 +77,12 @@ export class Emulator {
         wasm.emulator_hrg_set_pixel(this.__wbg_ptr, x, y);
     }
     /**
-     * Toggle HRG display on/off.
      * @param {boolean} enabled
      */
     hrg_toggle(enabled) {
         wasm.emulator_hrg_toggle(this.__wbg_ptr, enabled);
     }
     /**
-     * Pixel width: 320 (lores) or 640 (hires).
      * @returns {number}
      */
     hrg_width() {
@@ -100,7 +90,6 @@ export class Emulator {
         return ret >>> 0;
     }
     /**
-     * Write a byte directly to HRG memory at offset.
      * @param {number} offset
      * @param {number} value
      */
@@ -108,7 +97,6 @@ export class Emulator {
         wasm.emulator_hrg_write(this.__wbg_ptr, offset, value);
     }
     /**
-     * JS calls this to inject text as keystrokes (Claude RUN mode).
      * @param {Uint8Array} data
      */
     inject_keys(data) {
@@ -124,14 +112,12 @@ export class Emulator {
         return ret !== 0;
     }
     /**
-     * Push a key into the input buffer.
      * @param {number} ch
      */
     key_press(ch) {
         wasm.emulator_key_press(this.__wbg_ptr, ch);
     }
     /**
-     * Load a .COM file into memory at 0100h.
      * @param {Uint8Array} data
      */
     load_com(data) {
@@ -147,7 +133,6 @@ export class Emulator {
         return ret !== 0;
     }
     /**
-     * Check if waiting for a network response.
      * @returns {boolean}
      */
     needs_net() {
@@ -155,8 +140,6 @@ export class Emulator {
         return ret !== 0;
     }
     /**
-     * Get the request details for a pending connection (for JS to execute).
-     * For HTTP: "VERB URL\nHeaders...". For WSK: just the URL.
      * @param {number} conn_id
      * @returns {string}
      */
@@ -173,7 +156,6 @@ export class Emulator {
         }
     }
     /**
-     * Get just the request body bytes (for POST/PUT).
      * @param {number} conn_id
      * @returns {Uint8Array}
      */
@@ -184,7 +166,6 @@ export class Emulator {
         return v1;
     }
     /**
-     * Check if a connection is WebSocket (true) or HTTP (false).
      * @param {number} conn_id
      * @returns {boolean}
      */
@@ -193,14 +174,12 @@ export class Emulator {
         return ret !== 0;
     }
     /**
-     * Mount the network drive on a letter (0=A, 1=B, ...).
      * @param {number} drive
      */
     net_mount(drive) {
         wasm.emulator_net_mount(this.__wbg_ptr, drive);
     }
     /**
-     * JS calls this to deliver the HTTP response.
      * @param {number} conn_id
      * @param {Uint8Array} data
      */
@@ -210,7 +189,6 @@ export class Emulator {
         wasm.emulator_net_set_response(this.__wbg_ptr, conn_id, ptr0, len0);
     }
     /**
-     * JS calls this to deliver WebSocket incoming data.
      * @param {number} conn_id
      * @param {Uint8Array} data
      */
@@ -220,7 +198,6 @@ export class Emulator {
         wasm.emulator_net_ws_receive(this.__wbg_ptr, conn_id, ptr0, len0);
     }
     /**
-     * Get and clear pending WebSocket send data.
      * @param {number} conn_id
      * @returns {Uint8Array}
      */
@@ -237,8 +214,6 @@ export class Emulator {
         return this;
     }
     /**
-     * Run up to max_steps Z80 instructions. Stops early if waiting for key input.
-     * Returns number of steps executed.
      * @param {number} max_steps
      * @returns {number}
      */
@@ -247,7 +222,6 @@ export class Emulator {
         return ret >>> 0;
     }
     /**
-     * Get pointer to VDU memory for direct JS access.
      * @returns {number}
      */
     vdu_ptr() {
@@ -255,7 +229,6 @@ export class Emulator {
         return ret >>> 0;
     }
     /**
-     * Get the connection ID we're waiting on.
      * @returns {number}
      */
     waiting_net_id() {
