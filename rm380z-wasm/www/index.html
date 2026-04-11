@@ -339,7 +339,7 @@ document.getElementById('clearHrg').addEventListener('click', () => {
 document.getElementById('netBtn').addEventListener('click', () => {
   if (!emu) return;
   emu.net_mount(13); // N = 13 (0=A, 13=N)
-  status.textContent = 'Network mounted on N: — use N:CLONE.HTTP, N:0.CTL, N:0.DATA';
+  status.textContent = 'Network mounted on N: — use N:CLONE.WWW, N:0.CTL, N:0.DATA';
   textScreen.focus();
 });
 

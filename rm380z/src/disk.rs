@@ -6,10 +6,132 @@ use crate::diskimg::DiskImage;
 
 const MAX_DRIVES: usize = 16;
 
-/// A drive can be either a host directory or a CP/M disk image.
+/// A drive can be a host directory, a CP/M disk image, or a network drive.
 pub enum Drive {
     HostDir(PathBuf),
     Image(DiskImage),
+    Network(NetDrive),
+}
+
+/// Plan 9-style network drive. Connections created via CLONE.HTTP files.
+pub struct NetDrive {
+    conns: HashMap<u8, NetConn>,
+    pub next_id: u8,
+}
+
+struct NetConn {
+    ctl_data: Vec<u8>,
+    req_body: Vec<u8>,
+    resp_data: Vec<u8>,
+    resp_pos: usize,
+    state: NetState,
+}
+
+#[derive(PartialEq)]
+enum NetState { New, CtlWritten, ResponseReady }
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum NetFileType { Clone, Ctl, Data }
+
+impl NetDrive {
+    pub fn new() -> Self {
+        NetDrive { conns: HashMap::new(), next_id: 0 }
+    }
+
+    pub fn clone_conn(&mut self) -> u8 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.conns.insert(id, NetConn {
+            ctl_data: Vec::new(), req_body: Vec::new(),
+            resp_data: Vec::new(), resp_pos: 0, state: NetState::New,
+        });
+        id
+    }
+
+    pub fn write_ctl(&mut self, id: u8, data: &[u8]) {
+        if let Some(conn) = self.conns.get_mut(&id) {
+            for &b in data {
+                if b == 0x1A { break; }
+                conn.ctl_data.push(b);
+            }
+            conn.state = NetState::CtlWritten;
+        }
+    }
+
+    pub fn write_data(&mut self, id: u8, data: &[u8]) {
+        if let Some(conn) = self.conns.get_mut(&id) {
+            for &b in data {
+                if b == 0x1A { break; }
+                conn.req_body.push(b);
+            }
+        }
+    }
+
+    /// Execute the HTTP request. Called when the program reads from data.
+    pub fn execute_if_needed(&mut self, id: u8) -> bool {
+        let Some(conn) = self.conns.get_mut(&id) else { return false };
+        if conn.state != NetState::CtlWritten { return conn.state == NetState::ResponseReady; }
+
+        // Parse ctl: "VERB URL\nHeaders..."
+        let ctl = String::from_utf8_lossy(&conn.ctl_data).to_string();
+        let lines: Vec<&str> = ctl.lines().collect();
+        let first = lines.first().unwrap_or(&"");
+        let (verb, url) = first.split_once(' ').unwrap_or(("GET", first));
+
+        let mut req = match verb.to_uppercase().as_str() {
+            "POST" => ureq::post(url),
+            "PUT" => ureq::put(url),
+            "DELETE" => ureq::delete(url),
+            "PATCH" => ureq::patch(url),
+            "HEAD" => ureq::head(url),
+            _ => ureq::get(url),
+        };
+
+        // Add headers from ctl lines 1+
+        for line in lines.iter().skip(1) {
+            let line = line.trim();
+            if line.is_empty() { break; }
+            if let Some((key, val)) = line.split_once(':') {
+                req = req.set(key.trim(), val.trim());
+            }
+        }
+
+        // Execute
+        let result = if !conn.req_body.is_empty() && matches!(verb.to_uppercase().as_str(), "POST" | "PUT" | "PATCH") {
+            req.send_bytes(&conn.req_body)
+        } else {
+            req.call()
+        };
+
+        match result {
+            Ok(resp) => {
+                let mut body = Vec::new();
+                let _ = resp.into_reader().read_to_end(&mut body);
+                conn.resp_data = body;
+            }
+            Err(e) => {
+                conn.resp_data = format!("ERROR: {}\r\n", e).into_bytes();
+            }
+        }
+        conn.resp_pos = 0;
+        conn.state = NetState::ResponseReady;
+        true
+    }
+
+    pub fn read_data(&mut self, id: u8) -> Option<[u8; 128]> {
+        let conn = self.conns.get_mut(&id)?;
+        if conn.resp_pos >= conn.resp_data.len() { return None; }
+        let mut buf = [0x1Au8; 128];
+        let remaining = conn.resp_data.len() - conn.resp_pos;
+        let n = remaining.min(128);
+        buf[..n].copy_from_slice(&conn.resp_data[conn.resp_pos..conn.resp_pos + n]);
+        conn.resp_pos += 128;
+        Some(buf)
+    }
+
+    pub fn close_conn(&mut self, id: u8) {
+        self.conns.remove(&id);
+    }
 }
 
 pub struct DiskSystem {
@@ -45,8 +167,28 @@ impl DiskSystem {
     }
 
     /// Mount a path as a drive. Auto-detects directory vs .dsk file.
+    /// Mount a network drive.
+    pub fn mount_net(&mut self, drive: u8) {
+        if (drive as usize) < MAX_DRIVES {
+            self.drives[drive as usize] = Some(Drive::Network(NetDrive::new()));
+        }
+    }
+
+    /// Get mutable reference to network drive.
+    pub fn net_drive(&mut self, drive: u8) -> Option<&mut NetDrive> {
+        let d = if drive == 0 { self.current_disk } else { drive - 1 };
+        match self.drives.get_mut(d as usize)?.as_mut()? {
+            Drive::Network(n) => Some(n),
+            _ => None,
+        }
+    }
+
     pub fn mount(&mut self, drive: u8, path: PathBuf) {
         if (drive as usize) >= MAX_DRIVES { return; }
+        if path.to_str() == Some("net") {
+            self.mount_net(drive);
+            return;
+        }
         if path.is_dir() {
             self.drives[drive as usize] = Some(Drive::HostDir(path));
         } else if path.extension().map(|e| e == "dsk" || e == "DSK").unwrap_or(false) {
@@ -82,7 +224,7 @@ impl DiskSystem {
         let d = if drive == 0 { self.current_disk } else { drive - 1 };
         match self.drives.get(d as usize)?.as_ref()? {
             Drive::HostDir(p) => Some(p),
-            Drive::Image(_) => None,
+            Drive::Image(_) | Drive::Network(_) => None,
         }
     }
 
@@ -90,6 +232,12 @@ impl DiskSystem {
     pub fn is_image(&self, drive: u8) -> bool {
         let d = if drive == 0 { self.current_disk } else { drive - 1 };
         matches!(self.drives.get(d as usize), Some(Some(Drive::Image(_))))
+    }
+
+    /// Check if a drive is a network drive or disk image (not a host dir).
+    pub fn is_image_or_net(&self, drive: u8) -> bool {
+        let d = if drive == 0 { self.current_disk } else { drive - 1 };
+        matches!(self.drives.get(d as usize), Some(Some(Drive::Image(_) | Drive::Network(_))))
     }
 
     pub fn login_vector(&self) -> u16 {
@@ -127,6 +275,7 @@ impl DiskSystem {
         self.search_results = match &mut self.drives[d as usize] {
             Some(Drive::HostDir(dir)) => search_host_dir(dir, name, ext),
             Some(Drive::Image(img)) => img.search_files(name, ext),
+            Some(Drive::Network(_)) => Vec::new(),
             None => Vec::new(),
         };
         self.search_index = 0;
@@ -157,6 +306,7 @@ impl DiskSystem {
                 } else { false }
             }
             None => false,
+            Some(Drive::Network(_)) => false,
         }
     }
 
@@ -181,6 +331,7 @@ impl DiskSystem {
                     true
                 } else { false }
             }
+            Some(Drive::Network(_)) => false,
             None => false,
         }
     }
@@ -258,6 +409,7 @@ impl DiskSystem {
                 actual.map(|p| std::fs::remove_file(p).is_ok()).unwrap_or(false)
             }
             Some(Drive::Image(img)) => img.delete_file(name, ext),
+            Some(Drive::Network(_)) => false,
             None => false,
         }
     }

@@ -210,9 +210,43 @@ fn get_dpb(cpm: &mut Cpm) {
 
 // --- File I/O ---
 
+/// Parse a network filename from an FCB: CLONE.HTTP, 0.CTL, 0.DATA
+fn parse_net_fcb(cpu: &z80::cpu::Cpu, fcb: u16) -> Option<(&'static str, Option<u8>)> {
+    let name: String = (0..8).map(|i| (cpu.read8(fcb + 1 + i) & 0x7F) as char).collect();
+    let ext: String = (0..3).map(|i| (cpu.read8(fcb + 9 + i) & 0x7F) as char).collect();
+    let name = name.trim();
+    let ext = ext.trim();
+
+    if name == "CLONE" && (ext == "WWW" || ext == "WSK") {
+        return Some(("clone", None));
+    }
+    let id: u8 = name.parse().ok()?;
+    match ext {
+        "CTL" => Some(("ctl", Some(id))),
+        "DATA" => Some(("data", Some(id))),
+        _ => None,
+    }
+}
+
 fn open_file(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
     let drv = fcb::drive(&cpm.cpu, fcb_addr);
+
+    // Check for network drive
+    if cpm.disk.is_image_or_net(drv) {
+        if let Some(net) = cpm.disk.net_drive(drv) {
+            if let Some((ftype, id)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
+                match ftype {
+                    "clone" => { net.clone_conn(); cpm.cpu.a = 0; }
+                    "ctl" | "data" => { cpm.cpu.a = if id.is_some() { 0 } else { 0xFF }; }
+                    _ => { cpm.cpu.a = 0xFF; }
+                }
+                cpm.cpu.l = cpm.cpu.a; cpm.cpu.h = 0;
+                return;
+            }
+        }
+    }
+
     let name = fcb::name(&cpm.cpu, fcb_addr);
     let ext = fcb::ext(&cpm.cpu, fcb_addr);
     if cpm.disk.open(fcb_addr, drv, &name, &ext) {
@@ -267,6 +301,41 @@ fn delete_file(cpm: &mut Cpm) {
 
 fn read_seq(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
+
+    // Network read: handle clone (returns ID) and data (returns response)
+    if let Some((ftype, id)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
+        if let Some(net) = cpm.disk.net_drive(drv) {
+            match ftype {
+                "clone" => {
+                    // Read from clone returns the last allocated connection ID
+                    let last_id = if net.next_id > 0 { net.next_id - 1 } else { 0 };
+                    let id_str = format!("{}\r\n", last_id);
+                    let dma = cpm.disk.dma_addr as usize;
+                    let mut buf = [0x1Au8; 128];
+                    buf[..id_str.len()].copy_from_slice(id_str.as_bytes());
+                    cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
+                    cpm.cpu.a = 0;
+                }
+                "data" => {
+                    if let Some(id) = id {
+                        net.execute_if_needed(id);
+                        if let Some(buf) = net.read_data(id) {
+                            let dma = cpm.disk.dma_addr as usize;
+                            cpm.cpu.mem[dma..dma + 128].copy_from_slice(&buf);
+                            cpm.cpu.a = 0;
+                        } else {
+                            cpm.cpu.a = 1; // EOF
+                        }
+                    } else { cpm.cpu.a = 1; }
+                }
+                _ => { cpm.cpu.a = 1; }
+            }
+            cpm.cpu.l = cpm.cpu.a; cpm.cpu.h = 0;
+            return;
+        }
+    }
+
     let mem: &mut [u8; 0x10000] = &mut cpm.cpu.mem;
     if cpm.disk.read_seq(fcb_addr, mem) {
         let cr = cpm.cpu.read8(fcb_addr + 32);
@@ -279,6 +348,23 @@ fn read_seq(cpm: &mut Cpm) {
 
 fn write_seq(cpm: &mut Cpm) {
     let fcb_addr = cpm.cpu.de();
+    let drv = fcb::drive(&cpm.cpu, fcb_addr);
+
+    // Network write: ctl or data
+    if let Some((ftype, id)) = parse_net_fcb(&cpm.cpu, fcb_addr) {
+        let dma = cpm.disk.dma_addr as usize;
+        let data: Vec<u8> = (0..128).map(|i| cpm.cpu.mem[dma + i]).collect();
+        if let Some(net) = cpm.disk.net_drive(drv) {
+            match ftype {
+                "ctl" => { if let Some(id) = id { net.write_ctl(id, &data); } }
+                "data" => { if let Some(id) = id { net.write_data(id, &data); } }
+                _ => {}
+            }
+            cpm.cpu.a = 0; cpm.cpu.l = 0; cpm.cpu.h = 0;
+            return;
+        }
+    }
+
     let mem: &[u8; 0x10000] = &cpm.cpu.mem;
     if cpm.disk.write_seq(fcb_addr, mem) {
         let cr = cpm.cpu.read8(fcb_addr + 32);

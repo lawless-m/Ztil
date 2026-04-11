@@ -450,8 +450,8 @@ impl Emulator {
 
         if name_str == "CLONE" {
             let proto = match ext_str {
-                "HTTP" => NetProto::Http,
-                "WS" => NetProto::WebSocket,
+                "WWW" => NetProto::Http,
+                "WSK" => NetProto::WebSocket,
                 _ => return None,
             };
             return Some((NetFileType::Clone, None, proto));
