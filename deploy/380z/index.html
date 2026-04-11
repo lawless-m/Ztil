@@ -405,9 +405,11 @@ function flushWsWrites() {
 // Keyboard — capture on whole document (no need to click text screen)
 document.addEventListener('keydown', (e) => {
   if (!emu) return;
-  // Don't capture when file input is active
   if (e.target === fileInput) return;
-  e.preventDefault();
+  // Let browser shortcuts through (F keys, Alt, Meta/Cmd)
+  if (e.key.startsWith('F') && e.key.length > 1) return;
+  if (e.altKey || e.metaKey) return;
+
   let ch = 0;
   if (e.key === 'Enter') ch = 0x0D;
   else if (e.key === 'Backspace') ch = 0x08;
@@ -416,6 +418,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.ctrlKey && e.key.length === 1) ch = e.key.toUpperCase().charCodeAt(0) & 0x1F;
   else if (e.key.length === 1) ch = e.key.charCodeAt(0);
   if (ch === 0 || ch >= 128) return;
+  e.preventDefault();
 
   if (!emu.is_running()) {
     // CCP mode: handle locally
